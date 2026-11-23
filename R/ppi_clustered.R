@@ -87,8 +87,14 @@ ppi_clustered <- function(formula,
   )
 
   mats <- build_ppi_model_matrices(formula, sp$labeled, sp$unlabeled)
-  X_lab <- mats$X_lab
-  X_unlab <- mats$X_unlab
+  rank_info <- check_design_rank(mats$X_lab, mats$X_unlab)
+  if (!isTRUE(rank_info$full_rank)) {
+    cli::cli_warn(
+      "Rank-deficient design matrix detected; dropping aliased column{?s}: {.val {rank_info$aliased_cols}}."
+    )
+  }
+  X_lab <- mats$X_lab[, rank_info$keep_idx, drop = FALSE]
+  X_unlab <- mats$X_unlab[, rank_info$keep_idx, drop = FALSE]
   y_lab <- as.numeric(sp$labeled[[truth_col]])
   yhat_lab <- as.numeric(sp$labeled[[pred_col]])
   yhat_unlab <- as.numeric(sp$unlabeled[[pred_col]])
@@ -109,7 +115,8 @@ ppi_clustered <- function(formula,
     conf_level = conf_level,
     small_sample_df = small_sample_df,
     max_iter = as.integer(round(max_iter)),
-    tol = tol
+    tol = tol,
+    rank_info = rank_info
   )
 
   new_llm_ppi(
@@ -132,7 +139,8 @@ ppi_clustered <- function(formula,
       cluster_structure = res$cluster_structure,
       n_clusters_labeled = res$G_lab,
       n_clusters_unlabeled = res$G_unlab,
-      n_clusters_total = res$G_total
+      n_clusters_total = res$G_total,
+      aliased_terms = rank_info$aliased_cols
     )
   )
 }
@@ -226,8 +234,14 @@ ppi_lmer <- function(formula,
   )
 
   mats <- build_ppi_model_matrices(fixed_formula, sp$labeled, sp$unlabeled)
-  X_lab <- mats$X_lab
-  X_unlab <- mats$X_unlab
+  rank_info <- check_design_rank(mats$X_lab, mats$X_unlab)
+  if (!isTRUE(rank_info$full_rank)) {
+    cli::cli_warn(
+      "Rank-deficient design matrix detected; dropping aliased column{?s}: {.val {rank_info$aliased_cols}}."
+    )
+  }
+  X_lab <- mats$X_lab[, rank_info$keep_idx, drop = FALSE]
+  X_unlab <- mats$X_unlab[, rank_info$keep_idx, drop = FALSE]
   y_lab <- as.numeric(sp$labeled[[truth_col]])
   yhat_lab <- as.numeric(sp$labeled[[pred_col]])
   yhat_unlab <- as.numeric(sp$unlabeled[[pred_col]])
@@ -245,7 +259,6 @@ ppi_lmer <- function(formula,
   overlap <- length(intersect(unique(cl_lab), unique(cl_unlab))) > 0L
 
   if (weight_mode == "gls" && !overlap && vc_hum$tau2 > 0 && vc_hum$sigma2 > 0) {
-    # Disjoint clusters: exact cluster-level Woodbury GLS PPI++ (unbiased because cluster-size distributions match)
     res <- fit_ppi_gls_disjoint(
       X_lab = X_lab,
       y_lab = y_lab,
@@ -259,16 +272,15 @@ ppi_lmer <- function(formula,
       method = method,
       lambda = lambda,
       conf_level = conf_level,
-      small_sample_df = small_sample_df
+      small_sample_df = small_sample_df,
+      rank_info = rank_info
     )
     weight_used <- "gls_woodbury"
   } else {
-    # Overlapping clusters or OLS mode: identical observation weights across L and U guarantee exact unbiasedness
     w_lab <- NULL
     w_unlab <- NULL
     weight_used <- "ols"
     if (weight_mode == "gls" && vc_hum$tau2 > 0 && vc_hum$sigma2 > 0) {
-      # Inverse total-cluster-variance weight depends ONLY on total cluster size (L + U), identical for L and U rows
       all_cl <- c(cl_lab, cl_unlab)
       tot_sizes <- table(all_cl)
       w_lab <- 1 / (vc_hum$sigma2 + as.numeric(tot_sizes[cl_lab]) * vc_hum$tau2)
@@ -290,7 +302,8 @@ ppi_lmer <- function(formula,
       conf_level = conf_level,
       small_sample_df = small_sample_df,
       w_lab = w_lab,
-      w_unlab = w_unlab
+      w_unlab = w_unlab,
+      rank_info = rank_info
     )
   }
 
@@ -324,7 +337,8 @@ ppi_lmer <- function(formula,
       variance_components = vc_tbl,
       n_clusters_labeled = res$G_lab,
       n_clusters_unlabeled = res$G_unlab,
-      n_clusters_total = res$G_total
+      n_clusters_total = res$G_total,
+      aliased_terms = rank_info$aliased_cols
     )
   )
 }
@@ -413,7 +427,8 @@ fit_ppi_clustered_engine <- function(X_lab, y_lab, yhat_lab, cl_lab,
                                      w_lab = NULL,
                                      w_unlab = NULL,
                                      max_iter = 60L,
-                                     tol = 1e-9) {
+                                     tol = 1e-9,
+                                     rank_info = NULL) {
   n <- nrow(X_lab)
   N <- nrow(X_unlab)
   p <- ncol(X_lab)
@@ -560,13 +575,32 @@ fit_ppi_clustered_engine <- function(X_lab, y_lab, yhat_lab, cl_lab,
   df_hum <- if (isTRUE(small_sample_df)) max(G_lab - 1, 1) else Inf
   df_naive <- if (isTRUE(small_sample_df)) max(G_total - 1, 1) else Inf
 
-  tbl_ppi <- tidy_ppi_table(sol$theta, V_ppi, method_label = method_label, conf_level = conf_level, df = df_eff)
-  tbl_hum <- tidy_ppi_table(bench_hum$theta, bench_hum$vcov, method_label = "human_only", conf_level = conf_level, df = df_hum)
-  tbl_naive <- tidy_ppi_table(bench_naive$theta, bench_naive$vcov, method_label = "naive_llm", conf_level = conf_level, df = df_naive)
+  if (!is.null(rank_info) && !isTRUE(rank_info$full_rank)) {
+    exp_ppi <- expand_aliased_results(sol$theta, V_ppi, rank_info)
+    exp_hum <- expand_aliased_results(bench_hum$theta, bench_hum$vcov, rank_info)
+    exp_naive <- expand_aliased_results(bench_naive$theta, bench_naive$vcov, rank_info)
+    th_out <- exp_ppi$theta
+    V_out <- exp_ppi$vcov
+    th_hum_out <- exp_hum$theta
+    V_hum_out <- exp_hum$vcov
+    th_nv_out <- exp_naive$theta
+    V_nv_out <- exp_naive$vcov
+  } else {
+    th_out <- sol$theta
+    V_out <- V_ppi
+    th_hum_out <- bench_hum$theta
+    V_hum_out <- bench_hum$vcov
+    th_nv_out <- bench_naive$theta
+    V_nv_out <- bench_naive$vcov
+  }
+
+  tbl_ppi <- tidy_ppi_table(th_out, V_out, method_label = method_label, conf_level = conf_level, df = df_eff)
+  tbl_hum <- tidy_ppi_table(th_hum_out, V_hum_out, method_label = "human_only", conf_level = conf_level, df = df_hum)
+  tbl_naive <- tidy_ppi_table(th_nv_out, V_nv_out, method_label = "naive_llm", conf_level = conf_level, df = df_naive)
 
   list(
-    theta = sol$theta,
-    vcov = V_ppi,
+    theta = th_out,
+    vcov = V_out,
     lambda = lam_val,
     method_label = method_label,
     tbl_ppi = tbl_ppi,
@@ -588,7 +622,8 @@ fit_ppi_gls_disjoint <- function(X_lab, y_lab, yhat_lab, cl_lab,
                                  method = "ppi++",
                                  lambda = NULL,
                                  conf_level = 0.95,
-                                 small_sample_df = TRUE) {
+                                 small_sample_df = TRUE,
+                                 rank_info = NULL) {
   p <- ncol(X_lab)
   cl_L_u <- unique(cl_lab)
   cl_U_u <- unique(cl_unlab)
@@ -688,9 +723,9 @@ fit_ppi_gls_disjoint <- function(X_lab, y_lab, yhat_lab, cl_lab,
     H_inv_p <- safe_solve(H_naive)
 
     C_gg <- safe_cross_cov(S_y0, S_fL0)
-    V_tilde <- safe_cov(rbind(S_fL0, S_fU0))
+    V_tilde_eff <- safe_cov(S_fL0) + (G_lab / G_unlab) * safe_cov(S_fU0)
     num <- sum(diag(H_inv_p %*% C_gg %*% H_inv_p))
-    denom <- (1 + G_lab / G_unlab) * sum(diag(H_inv_p %*% V_tilde %*% H_inv_p))
+    denom <- sum(diag(H_inv_p %*% V_tilde_eff %*% H_inv_p))
     lam_val <- if (is.finite(denom) && denom > 1e-12) min(max(num / denom, 0), 1) else 0
     method_label <- "ppi++_lmer"
   }
@@ -714,6 +749,15 @@ fit_ppi_gls_disjoint <- function(X_lab, y_lab, yhat_lab, cl_lab,
 
   df_eff <- if (isTRUE(small_sample_df)) max(G_lab - 1, 1) else Inf
   df_naive <- if (isTRUE(small_sample_df)) max(G_total - 1, 1) else Inf
+
+  if (!is.null(rank_info) && !isTRUE(rank_info$full_rank)) {
+    exp_ppi <- expand_aliased_results(theta_ppi, V_ppi, rank_info)
+    exp_hum <- expand_aliased_results(theta_hum, V_hum, rank_info)
+    exp_naive <- expand_aliased_results(theta_naive, V_naive, rank_info)
+    theta_ppi <- exp_ppi$theta; V_ppi <- exp_ppi$vcov
+    theta_hum <- exp_hum$theta; V_hum <- exp_hum$vcov
+    theta_naive <- exp_naive$theta; V_naive <- exp_naive$vcov
+  }
 
   tbl_ppi <- tidy_ppi_table(theta_ppi, V_ppi, method_label = method_label, conf_level = conf_level, df = df_eff)
   tbl_hum <- tidy_ppi_table(theta_hum, V_hum, method_label = "human_only", conf_level = conf_level, df = df_eff)

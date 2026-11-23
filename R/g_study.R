@@ -102,6 +102,7 @@ g_study <- function(data,
   if (nrow(df) < 4L) {
     cli::cli_abort("Not enough complete observations ({nrow(df)}) to fit a G-study.")
   }
+  assert_finite_values(df[[score_col]], score_col)
 
   # Check level counts
   n_units <- length(unique(df[[id_col]]))
@@ -127,13 +128,78 @@ g_study <- function(data,
   has_replicates <- isTRUE(max(as.integer(cell_counts)) > 1L)
 
   # Enumerate estimable variance component subsets
-  # Maximum order separable from residual: M - 1 when no replicates, M when replicates > 1
   M <- length(all_factors)
   max_sep_order <- if (has_replicates) min(max_interaction, M) else min(max_interaction, M - 1L)
   subsets <- list()
   for (ord in seq_len(max_sep_order)) {
     cmb <- utils::combn(all_factors, ord, simplify = FALSE)
     subsets <- c(subsets, cmb)
+  }
+
+  # Guard against constant (zero-variance) scores so numerical dust never fabricates high reliability
+  if (is_constant_numeric(df[[score_col]])) {
+    cli::cli_warn(
+      "Scores in {.val {score_col}} are constant (zero variance); G and Phi coefficients are undefined (NA)."
+    )
+    comps <- lapply(subsets, function(s) {
+      list(label = paste(s, collapse = ":"), factors = s, variance = 0, raw_variance = 0, is_residual = FALSE)
+    })
+    comps[[length(comps) + 1L]] <- list(
+      label = "Residual", factors = all_factors, variance = 0, raw_variance = 0, is_residual = TRUE
+    )
+    vc_rows <- lapply(comps, function(comp) {
+      is_resid <- isTRUE(comp$is_residual)
+      f_inv <- if (is_resid) facets else intersect(comp$factors, facets)
+      has_u <- if (is_resid) TRUE else (id_col %in% comp$factors)
+      in_rel <- is_resid || (has_u && length(f_inv) > 0L)
+      in_abs <- is_resid || (length(f_inv) > 0L)
+      role <- if (!is_resid && has_u && length(f_inv) == 0L) {
+        "universe"
+      } else if (in_rel) {
+        "relative_and_absolute"
+      } else {
+        "absolute_only"
+      }
+      tibble::tibble(
+        component = comp$label,
+        variance = 0,
+        raw_variance = 0,
+        sd = 0,
+        role = role,
+        in_relative_error = in_rel,
+        in_absolute_error = in_abs,
+        is_residual = is_resid,
+        facets_involved = list(f_inv),
+        pct_total = 0
+      )
+    })
+    vc_tbl <- do.call(rbind, vc_rows)
+    return(structure(
+      list(
+        variance_components = vc_tbl,
+        g_coef = NA_real_,
+        phi_coef = NA_real_,
+        g_single = NA_real_,
+        phi_single = NA_real_,
+        sigma2_universe = 0,
+        sigma2_relative = 0,
+        sigma2_absolute = 0,
+        sem_relative = 0,
+        sem_absolute = 0,
+        n_units = n_units,
+        n_facets = n_facets,
+        n_replicates = n_replicates,
+        n_obs = nrow(df),
+        balanced = balanced,
+        method_used = "constant",
+        singular = TRUE,
+        constant_scores = TRUE,
+        facets = facets,
+        id_col = id_col,
+        score_col = score_col
+      ),
+      class = "llm_g_study"
+    ))
   }
 
   # Fit variance components
@@ -163,9 +229,14 @@ g_study <- function(data,
     }
   }
 
-  # Build structured variance components tibble
+  # Build structured variance components tibble, zeroing sub-precision numerical dust
+  obs_var <- stats::var(as.numeric(df[[score_col]]))
+  dust_tol <- 1e-12 * max(obs_var, 1)
+
   vc_rows <- lapply(seq_along(fit_res$components), function(i) {
     comp <- fit_res$components[[i]]
+    v_clean <- max(as.numeric(comp$variance), 0)
+    if (v_clean < dust_tol) v_clean <- 0
     is_resid <- isTRUE(comp$is_residual)
     f_inv <- if (is_resid) facets else intersect(comp$factors, facets)
     has_u <- if (is_resid) TRUE else (id_col %in% comp$factors)
@@ -181,9 +252,9 @@ g_study <- function(data,
 
     tibble::tibble(
       component = comp$label,
-      variance = comp$variance,
+      variance = v_clean,
       raw_variance = comp$raw_variance,
-      sd = sqrt(max(comp$variance, 0)),
+      sd = sqrt(v_clean),
       role = role,
       in_relative_error = in_rel,
       in_absolute_error = in_abs,
@@ -219,6 +290,7 @@ g_study <- function(data,
       balanced = balanced,
       method_used = method_used,
       singular = isTRUE(fit_res$singular),
+      constant_scores = FALSE,
       facets = facets,
       id_col = id_col,
       score_col = score_col
@@ -428,8 +500,8 @@ compute_g_reliability <- function(vc_tbl, n_facets, n_replicates = 1) {
     }
   }
 
-  g_coef <- if (sigma2_u + sigma2_rel > 0) sigma2_u / (sigma2_u + sigma2_rel) else 0
-  phi_coef <- if (sigma2_u + sigma2_abs > 0) sigma2_u / (sigma2_u + sigma2_abs) else 0
+  g_coef <- if (sigma2_u + sigma2_rel > 0) sigma2_u / (sigma2_u + sigma2_rel) else NA_real_
+  phi_coef <- if (sigma2_u + sigma2_abs > 0) sigma2_u / (sigma2_u + sigma2_abs) else NA_real_
 
   list(
     sigma2_universe = sigma2_u,

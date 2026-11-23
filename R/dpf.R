@@ -82,6 +82,7 @@ dpf_test <- function(data,
   if (!is.numeric(df[[truth_col]])) {
     cli::cli_abort("{.arg truth_col} ({.val {truth_col}}) must be numeric.")
   }
+  assert_finite_values(df[[truth_col]], truth_col)
 
   if (isTRUE(na.rm)) {
     keep <- stats::complete.cases(df[, req_cols, drop = FALSE])
@@ -125,6 +126,7 @@ dpf_test <- function(data,
     if (!is.numeric(raw_score)) {
       cli::cli_abort("For {.code family = \"gaussian\"}, {.val {score_col}} must be numeric.")
     }
+    assert_finite_values(raw_score, score_col)
     y_num <- as.numeric(raw_score)
   }
 
@@ -326,45 +328,101 @@ wald_subset_test <- function(fit, idx, V) {
 #' Core DPF nested model fitting and hypothesis testing
 #' @noRd
 fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
+  g_levels <- levels(group)
   t_mean <- mean(truth)
   t_c <- truth - t_mean
-  work <- data.frame(y = y, t_c = t_c, group = group)
 
-  # Build polynomial terms cleanly without orthogonal poly prediction quirks
-  t_terms <- if (poly_degree == 1L) {
-    "t_c"
-  } else {
-    paste0("I(t_c^", seq_len(poly_degree), ")", collapse = " + ")
+  # Guard 1: Constant (zero-variance) LLM scores -> zero DPF, no spurious lm/glm warnings
+  if (is_constant_numeric(y)) {
+    cli::cli_warn(
+      "LLM scores are constant (zero variance); DPF statistics are undefined (NA) and no subgroup bias is detected."
+    )
+    tests_tbl <- tibble::tibble(
+      test = c("uniform", "nonuniform", "omnibus"),
+      stat_type = rep(if (family == "gaussian") "F" else "LRT_Chisq", 3L),
+      statistic = rep(NA_real_, 3L),
+      df = c(length(g_levels) - 1, length(g_levels) - 1, 2 * (length(g_levels) - 1)),
+      p_value = rep(NA_real_, 3L),
+      delta_r2 = c(0, 0, 0),
+      cohens_f2 = if (family == "gaussian") c(0, 0, 0) else rep(NA_real_, 3L),
+      magnitude = rep("negligible", 3L),
+      flagged = rep(FALSE, 3L)
+    )
+    sub_rows <- lapply(g_levels, function(gl) {
+      ii <- which(as.character(group) == gl)
+      y_g <- y[ii]
+      tr_g <- truth[ii]
+      tibble::tibble(
+        group = gl,
+        is_reference = identical(gl, g_levels[1L]),
+        n = length(ii),
+        mean_llm = mean(y_g),
+        mean_truth = mean(tr_g),
+        raw_bias = mean(y_g - tr_g),
+        cond_bias = 0,
+        cond_bias_se = 0,
+        conf_low = 0,
+        conf_high = 0,
+        cond_slope = 0,
+        cond_slope_se = 0,
+        rmse = sqrt(mean((y_g - tr_g)^2)),
+        pearson_r = NA_real_
+      )
+    })
+    return(list(
+      tests = tests_tbl,
+      subgroup_summary = do.call(rbind, sub_rows),
+      models = list(null = NULL, uniform = NULL, nonuniform = NULL),
+      degenerate = TRUE
+    ))
   }
 
-  fml0 <- stats::as.formula(paste("y ~", t_terms))
-  fml1 <- stats::as.formula(paste("y ~", t_terms, "+ group"))
-  fml2 <- stats::as.formula(paste("y ~", t_terms, "+ group + t_c:group"))
+  work <- data.frame(y = y, t_c = t_c, group = group)
+  const_truth <- is_constant_numeric(truth)
+
+  # Build polynomial terms cleanly without orthogonal poly prediction quirks
+  if (const_truth) {
+    fml0 <- stats::as.formula("y ~ 1")
+    fml1 <- stats::as.formula("y ~ group")
+    fml2 <- stats::as.formula("y ~ group")
+  } else {
+    t_terms <- if (poly_degree == 1L) {
+      "t_c"
+    } else {
+      paste0("I(t_c^", seq_len(poly_degree), ")", collapse = " + ")
+    }
+    fml0 <- stats::as.formula(paste("y ~", t_terms))
+    fml1 <- stats::as.formula(paste("y ~", t_terms, "+ group"))
+    fml2 <- stats::as.formula(paste("y ~", t_terms, "+ group + t_c:group"))
+  }
 
   if (family == "gaussian") {
     m0 <- stats::lm(fml0, data = work)
     m1 <- stats::lm(fml1, data = work)
     m2 <- stats::lm(fml2, data = work)
 
-    r2_0 <- summary(m0)$r.squared
-    r2_1 <- summary(m1)$r.squared
-    r2_2 <- summary(m2)$r.squared
+    r2_0 <- suppressWarnings(summary(m0)$r.squared) %||% 0
+    r2_1 <- suppressWarnings(summary(m1)$r.squared) %||% 0
+    r2_2 <- suppressWarnings(summary(m2)$r.squared) %||% 0
+    if (is.na(r2_0)) r2_0 <- 0
+    if (is.na(r2_1)) r2_1 <- 0
+    if (is.na(r2_2)) r2_2 <- 0
     dr2_u <- max(r2_1 - r2_0, 0)
-    dr2_nu <- max(r2_2 - r2_1, 0)
+    dr2_nu <- if (const_truth) 0 else max(r2_2 - r2_1, 0)
     dr2_tot <- max(r2_2 - r2_0, 0)
-    f2_u <- if (1 - r2_1 > 0) dr2_u / (1 - r2_1) else NA_real_
-    f2_nu <- if (1 - r2_2 > 0) dr2_nu / (1 - r2_2) else NA_real_
-    f2_tot <- if (1 - r2_2 > 0) dr2_tot / (1 - r2_2) else NA_real_
+    f2_u <- if (1 - r2_1 > 1e-12) dr2_u / (1 - r2_1) else NA_real_
+    f2_nu <- if (const_truth) 0 else if (1 - r2_2 > 1e-12) dr2_nu / (1 - r2_2) else NA_real_
+    f2_tot <- if (1 - r2_2 > 1e-12) dr2_tot / (1 - r2_2) else NA_real_
 
     if (is.null(cluster)) {
-      a_u <- stats::anova(m0, m1)
-      a_nu <- stats::anova(m1, m2)
-      a_tot <- stats::anova(m0, m2)
+      a_u <- suppressWarnings(stats::anova(m0, m1))
+      a_nu <- if (const_truth) NULL else suppressWarnings(stats::anova(m1, m2))
+      a_tot <- suppressWarnings(stats::anova(m0, m2))
       stat_type <- "F"
-      stats_vec <- c(a_u$F[2L], a_nu$F[2L], a_tot$F[2L])
-      df_vec <- c(a_u$Df[2L], a_nu$Df[2L], a_tot$Df[2L])
-      p_vec <- c(a_u$`Pr(>F)`[2L], a_nu$`Pr(>F)`[2L], a_tot$`Pr(>F)`[2L])
-      V2 <- stats::vcov(m2)
+      stats_vec <- c(a_u$F[2L], if (is.null(a_nu)) NA_real_ else a_nu$F[2L], a_tot$F[2L])
+      df_vec <- c(a_u$Df[2L], if (is.null(a_nu)) 0 else a_nu$Df[2L], a_tot$Df[2L])
+      p_vec <- c(a_u$`Pr(>F)`[2L], if (is.null(a_nu)) NA_real_ else a_nu$`Pr(>F)`[2L], a_tot$`Pr(>F)`[2L])
+      V2 <- suppressWarnings(stats::vcov(m2))
     } else {
       V1 <- vcov_cluster_fit(m1, cluster)
       V2 <- vcov_cluster_fit(m2, cluster)
@@ -372,7 +430,7 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
       idx_int2 <- grep("t_c:group|group.*:t_c", names(stats::coef(m2)))
       idx_all2 <- union(grep("^group", names(stats::coef(m2))), idx_int2)
       w_u <- wald_subset_test(m1, idx_g1, V1)
-      w_nu <- wald_subset_test(m2, idx_int2, V2)
+      w_nu <- if (const_truth) list(stat = NA_real_, df = 0, p = NA_real_) else wald_subset_test(m2, idx_int2, V2)
       w_tot <- wald_subset_test(m2, idx_all2, V2)
       stat_type <- "Wald_Chisq"
       stats_vec <- c(w_u$stat, w_nu$stat, w_tot$stat)
@@ -388,20 +446,20 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
     r2_1 <- nagelkerke_r2(m1)
     r2_2 <- nagelkerke_r2(m2)
     dr2_u <- max(r2_1 - r2_0, 0)
-    dr2_nu <- max(r2_2 - r2_1, 0)
+    dr2_nu <- if (const_truth) 0 else max(r2_2 - r2_1, 0)
     dr2_tot <- max(r2_2 - r2_0, 0)
     f2_u <- NA_real_
     f2_nu <- NA_real_
     f2_tot <- NA_real_
 
     if (is.null(cluster)) {
-      a_u <- stats::anova(m0, m1, test = "Chisq")
-      a_nu <- stats::anova(m1, m2, test = "Chisq")
-      a_tot <- stats::anova(m0, m2, test = "Chisq")
+      a_u <- suppressWarnings(stats::anova(m0, m1, test = "Chisq"))
+      a_nu <- if (const_truth) NULL else suppressWarnings(stats::anova(m1, m2, test = "Chisq"))
+      a_tot <- suppressWarnings(stats::anova(m0, m2, test = "Chisq"))
       stat_type <- "LRT_Chisq"
-      stats_vec <- c(a_u$Deviance[2L], a_nu$Deviance[2L], a_tot$Deviance[2L])
-      df_vec <- c(a_u$Df[2L], a_nu$Df[2L], a_tot$Df[2L])
-      p_vec <- c(a_u$`Pr(>Chi)`[2L], a_nu$`Pr(>Chi)`[2L], a_tot$`Pr(>Chi)`[2L])
+      stats_vec <- c(a_u$Deviance[2L], if (is.null(a_nu)) NA_real_ else a_nu$Deviance[2L], a_tot$Deviance[2L])
+      df_vec <- c(a_u$Df[2L], if (is.null(a_nu)) 0 else a_nu$Df[2L], a_tot$Df[2L])
+      p_vec <- c(a_u$`Pr(>Chi)`[2L], if (is.null(a_nu)) NA_real_ else a_nu$`Pr(>Chi)`[2L], a_tot$`Pr(>Chi)`[2L])
       V2 <- stats::vcov(m2)
     } else {
       V1 <- vcov_cluster_fit(m1, cluster)
@@ -410,7 +468,7 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
       idx_int2 <- grep("t_c:group|group.*:t_c", names(stats::coef(m2)))
       idx_all2 <- union(grep("^group", names(stats::coef(m2))), idx_int2)
       w_u <- wald_subset_test(m1, idx_g1, V1)
-      w_nu <- wald_subset_test(m2, idx_int2, V2)
+      w_nu <- if (const_truth) list(stat = NA_real_, df = 0, p = NA_real_) else wald_subset_test(m2, idx_int2, V2)
       w_tot <- wald_subset_test(m2, idx_all2, V2)
       stat_type <- "Wald_Chisq"
       stats_vec <- c(w_u$stat, w_nu$stat, w_tot$stat)
@@ -435,7 +493,6 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
   # Subgroup bias & slope diagnostics from Model 2 (evaluated at t_c = 0, i.e. mean truth)
   cf2 <- stats::coef(m2)
   z_crit <- stats::qnorm(1 - alpha / 2)
-  g_levels <- levels(group)
   sub_rows <- lapply(g_levels, function(gl) {
     ii <- which(as.character(group) == gl)
     y_g <- y[ii]
@@ -444,8 +501,8 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
     if (identical(gl, g_levels[1L])) {
       cond_bias <- 0
       bias_se <- 0
-      slope <- unname(cf2["t_c"])
-      slope_se <- sqrt(max(V2["t_c", "t_c"], 0))
+      slope <- if ("t_c" %in% names(cf2)) unname(cf2["t_c"]) else NA_real_
+      slope_se <- if ("t_c" %in% rownames(V2)) sqrt(max(V2["t_c", "t_c"], 0)) else NA_real_
     } else {
       g_term <- paste0("group", gl)
       int_term1 <- paste0("t_c:group", gl)
@@ -455,17 +512,20 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
       cond_bias <- if (g_term %in% names(cf2)) unname(cf2[g_term]) else NA_real_
       bias_se <- if (g_term %in% rownames(V2)) sqrt(max(V2[g_term, g_term], 0)) else NA_real_
 
-      if (int_term %in% names(cf2) && !is.na(cf2[int_term])) {
+      if ("t_c" %in% names(cf2) && int_term %in% names(cf2) && !is.na(cf2[int_term])) {
         slope <- unname(cf2["t_c"] + cf2[int_term])
         idx_s <- c("t_c", int_term)
-        slope_se <- sqrt(max(sum(V2[idx_s, idx_s]), 0))
-      } else {
+        slope_se <- if (all(idx_s %in% rownames(V2))) sqrt(max(sum(V2[idx_s, idx_s]), 0)) else NA_real_
+      } else if ("t_c" %in% names(cf2)) {
         slope <- unname(cf2["t_c"])
-        slope_se <- sqrt(max(V2["t_c", "t_c"], 0))
+        slope_se <- if ("t_c" %in% rownames(V2)) sqrt(max(V2["t_c", "t_c"], 0)) else NA_real_
+      } else {
+        slope <- NA_real_
+        slope_se <- NA_real_
       }
     }
 
-    r_g <- if (length(ii) >= 3L && stats::sd(y_g) > 0 && stats::sd(tr_g) > 0) {
+    r_g <- if (length(ii) >= 3L && !is_constant_numeric(y_g) && !is_constant_numeric(tr_g)) {
       stats::cor(y_g, tr_g)
     } else {
       NA_real_
@@ -493,7 +553,8 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
   list(
     tests = tests_tbl,
     subgroup_summary = subgroup_tbl,
-    models = list(null = m0, uniform = m1, nonuniform = m2)
+    models = list(null = m0, uniform = m1, nonuniform = m2),
+    degenerate = FALSE
   )
 }
 

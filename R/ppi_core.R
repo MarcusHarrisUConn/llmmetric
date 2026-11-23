@@ -47,13 +47,16 @@ prepare_ppi_data <- function(data,
     )
   }
 
+  assert_finite_values(labeled_df[[truth_col]], truth_col)
+  assert_finite_values(labeled_df[[pred_col]], pred_col)
+  assert_finite_values(unlabeled_df[[pred_col]], pred_col)
+
   list(labeled = labeled_df, unlabeled = unlabeled_df)
 }
 
 #' Build synchronized model matrices on labeled and unlabeled data frames
 #' @noRd
 build_ppi_model_matrices <- function(formula, labeled_df, unlabeled_df) {
-  # Combine covariate columns so factor levels and contrasts match identically across L and U
   rhs_fml <- stats::delete.response(stats::terms(formula, data = labeled_df))
   rhs_vars <- all.vars(rhs_fml)
 
@@ -73,6 +76,9 @@ build_ppi_model_matrices <- function(formula, labeled_df, unlabeled_df) {
     X_lab <- matrix(1, nrow = n_lab, ncol = 1L, dimnames = list(NULL, "(Intercept)"))
     X_unlab <- matrix(1, nrow = n_unlab, ncol = 1L, dimnames = list(NULL, "(Intercept)"))
   }
+
+  assert_finite_values(as.numeric(X_lab), "model matrix (labeled)")
+  assert_finite_values(as.numeric(X_unlab), "model matrix (unlabeled)")
 
   list(X_lab = X_lab, X_unlab = X_unlab, terms = rhs_fml)
 }
@@ -114,7 +120,10 @@ canonical_glm_ops <- function(family_name) {
     )
   } else if (family_name == "binomial") {
     list(
-      b = function(eta) ifelse(eta > 0, eta + log1p(exp(-eta)), log1p(exp(eta))),
+      b = function(eta) {
+        eta_c <- pmin(pmax(eta, -30), 30)
+        ifelse(eta_c > 0, eta_c + log1p(exp(-eta_c)), log1p(exp(eta_c)))
+      },
       mu = function(eta) {
         eta_c <- pmin(pmax(eta, -30), 30)
         stats::plogis(eta_c)
@@ -122,14 +131,14 @@ canonical_glm_ops <- function(family_name) {
       var = function(eta) {
         eta_c <- pmin(pmax(eta, -30), 30)
         p <- stats::plogis(eta_c)
-        pmax(p * (1 - p), 1e-8)
+        pmax(p * (1 - p), 1e-10)
       }
     )
   } else if (family_name == "poisson") {
     list(
-      b = function(eta) exp(pmin(eta, 25)),
-      mu = function(eta) exp(pmin(eta, 25)),
-      var = function(eta) pmax(exp(pmin(eta, 25)), 1e-8)
+      b = function(eta) exp(pmin(pmax(eta, -25), 20)),
+      mu = function(eta) exp(pmin(pmax(eta, -25), 20)),
+      var = function(eta) pmax(exp(pmin(pmax(eta, -25), 20)), 1e-10)
     )
   } else {
     cli::cli_abort("Unsupported canonical GLM family {.val {family_name}}.")
@@ -152,7 +161,6 @@ solve_ppi_glm_objective <- function(X_lab, y_lab, yhat_lab, X_unlab, yhat_unlab,
 
   if (is.null(w_lab)) w_lab <- rep(1, n)
   if (is.null(w_unlab)) w_unlab <- rep(1, N)
-  # Normalize weights so mean weight = 1
   w_lab <- w_lab / mean(w_lab)
   w_unlab <- w_unlab / mean(w_unlab)
 
@@ -164,10 +172,10 @@ solve_ppi_glm_objective <- function(X_lab, y_lab, yhat_lab, X_unlab, yhat_unlab,
       lambda * crossprod(X_unlab, w_unlab * yhat_unlab) / N
     theta <- as.numeric(safe_solve(H, rhs))
     names(theta) <- colnames(X_lab)
-    return(list(theta = theta, hessian = H, converged = TRUE, iterations = 1L))
+    dimnames(H) <- list(colnames(X_lab), colnames(X_lab))
+    return(list(theta = theta, hessian = H, converged = TRUE, iterations = 1L, separation = FALSE))
   }
 
-  # Target linear term does not depend on theta
   lin_rhs <- as.numeric(
     crossprod(X_lab, w_lab * (y_lab - lambda * yhat_lab)) / n +
       lambda * crossprod(X_unlab, w_unlab * yhat_unlab) / N
@@ -176,10 +184,9 @@ solve_ppi_glm_objective <- function(X_lab, y_lab, yhat_lab, X_unlab, yhat_unlab,
   obj_fn <- function(th) {
     eta_L <- as.numeric(X_lab %*% th)
     eta_U <- as.numeric(X_unlab %*% th)
-    val <- (1 - lambda) * mean(w_lab * ops$b(eta_L)) +
+    (1 - lambda) * mean(w_lab * ops$b(eta_L)) +
       lambda * mean(w_unlab * ops$b(eta_U)) -
       sum(th * lin_rhs)
-    val
   }
 
   grad_hess <- function(th) {
@@ -197,16 +204,17 @@ solve_ppi_glm_objective <- function(X_lab, y_lab, yhat_lab, X_unlab, yhat_unlab,
     )
     H <- (1 - lambda) * crossprod(X_lab, X_lab * (w_lab * v_L)) / n +
       lambda * crossprod(X_unlab, X_unlab * (w_unlab * v_U)) / N
-    list(grad = grad, H = H)
+    list(grad = grad, H = H, eta_L = eta_L, eta_U = eta_U)
   }
 
-  theta <- if (!is.null(start) && length(start) == p && all(is.finite(start))) {
+  theta <- if (!is.null(start) && length(start) == p && all(is.finite(start)) && max(abs(start)) < 12) {
     as.numeric(start)
   } else {
     rep(0, p)
   }
 
   converged <- FALSE
+  separation <- FALSE
   cur_obj <- obj_fn(theta)
   iter_used <- 0L
 
@@ -217,13 +225,29 @@ solve_ppi_glm_objective <- function(X_lab, y_lab, yhat_lab, X_unlab, yhat_unlab,
       converged <- TRUE
       break
     }
-    # Add tiny Levenberg damping only if near-singular
-    step <- as.numeric(safe_solve(gh$H + diag(1e-10, p), gh$grad))
-    if (!all(is.finite(step))) {
+
+    # Check separation / Hessian collapse in binomial & Poisson models
+    rc <- tryCatch(rcond(gh$H), error = function(e) 0)
+    if (family_name == "binomial" && (max(abs(theta)) > 15 || max(abs(gh$eta_L)) > 18 || !is.finite(rc) || rc < 1e-9)) {
+      separation <- TRUE
+      break
+    }
+    if (family_name == "poisson" && (max(abs(gh$eta_L)) > 19 || !is.finite(rc) || rc < 1e-11)) {
+      separation <- TRUE
       break
     }
 
-    # Backtracking line search ensuring Armijo decrease
+    step <- as.numeric(safe_solve(gh$H + diag(1e-10, p), gh$grad))
+    if (!all(is.finite(step))) {
+      separation <- TRUE
+      break
+    }
+    # Cap per-iteration Newton step norm to prevent overshoot into flat logistic tails
+    max_step <- max(abs(step))
+    if (max_step > 4) {
+      step <- step * (4 / max_step)
+    }
+
     alpha <- 1
     accepted <- FALSE
     dir_deriv <- sum(gh$grad * step)
@@ -248,18 +272,26 @@ solve_ppi_glm_objective <- function(X_lab, y_lab, yhat_lab, X_unlab, yhat_unlab,
   }
 
   gh_final <- grad_hess(theta)
+  if (family_name == "binomial" && (max(abs(theta)) > 15 || max(abs(gh_final$eta_L)) > 18)) {
+    separation <- TRUE
+  }
   names(theta) <- colnames(X_lab)
   dimnames(gh_final$H) <- list(colnames(X_lab), colnames(X_lab))
 
   list(
     theta = theta,
     hessian = gh_final$H,
-    converged = converged,
-    iterations = iter_used
+    converged = converged && !separation,
+    iterations = iter_used,
+    separation = separation
   )
 }
 
 #' Compute optimal scalar power-tuning lambda* for i.i.d. M-estimation PPI++
+#'
+#' Uses exact separate-sample denominator `V_tilde_L + (n/N) * V_tilde_U` so
+#' optimal lambda stays bounded, finite, and exact even under variance mismatch
+#' or constant/perfect LLM predictions.
 #' @noRd
 compute_optimal_lambda_iid <- function(G_lab, G_tilde_lab, G_tilde_unlab, H, clip = TRUE) {
   n <- nrow(G_lab)
@@ -267,11 +299,10 @@ compute_optimal_lambda_iid <- function(G_lab, G_tilde_lab, G_tilde_unlab, H, cli
   H_inv <- safe_solve(H)
 
   C_gg <- safe_cross_cov(G_lab, G_tilde_lab)
-  # Pool unlabeled + labeled LLM gradients for lower-variance V_tilde estimate
-  V_tilde <- safe_cov(rbind(G_tilde_lab, G_tilde_unlab))
+  V_tilde_eff <- safe_cov(G_tilde_lab) + (n / N) * safe_cov(G_tilde_unlab)
 
   num <- sum(diag(H_inv %*% C_gg %*% H_inv))
-  denom <- (1 + n / N) * sum(diag(H_inv %*% V_tilde %*% H_inv))
+  denom <- sum(diag(H_inv %*% V_tilde_eff %*% H_inv))
 
   if (!is.finite(denom) || denom <= 1e-12) {
     return(0)
@@ -288,14 +319,14 @@ compute_optimal_lambda_iid <- function(G_lab, G_tilde_lab, G_tilde_unlab, H, cli
 
 #' Compute i.i.d. PPI++ sandwich covariance matrix with HC1 small-sample correction
 #' @noRd
-compute_ppi_vcov_iid <- function(G_lab, G_tilde_lab, G_tilde_unlab, H, lambda) {
+compute_ppi_vcov_iid <- function(G_lab, G_tilde_lab, G_tilde_unlab, H, lambda,
+                                 separation = FALSE) {
   n <- nrow(G_lab)
   N <- nrow(G_tilde_unlab)
   p <- ncol(G_lab)
   H_inv <- safe_solve(H)
 
   D_lab <- G_lab - lambda * G_tilde_lab
-  # HC1-style finite-sample df adjustment on labeled set
   df_adj_lab <- if (n > p) (n - 1) / (n - p) else 1
   V_lab <- df_adj_lab * safe_cov(D_lab)
   V_unlab <- safe_cov(G_tilde_unlab)
@@ -303,6 +334,13 @@ compute_ppi_vcov_iid <- function(G_lab, G_tilde_lab, G_tilde_unlab, H, lambda) {
   meat <- (1 / n) * V_lab + (lambda^2 / N) * V_unlab
   V <- H_inv %*% meat %*% H_inv
   V <- 0.5 * (V + t(V))
+
+  # Under binomial/Poisson separation, prevent zero-residual sandwich SE collapse
+  if (isTRUE(separation)) {
+    V_fisher <- safe_solve(H + diag(1e-10, p)) / n
+    diag(V) <- pmax(diag(V), pmax(diag(V_fisher), 0))
+  }
+
   dimnames(V) <- list(colnames(G_lab), colnames(G_lab))
   V
 }
@@ -314,8 +352,9 @@ tidy_ppi_table <- function(theta, vcov_mat, method_label, conf_level = 0.95, df 
   if (is.null(terms)) {
     terms <- paste0("param_", seq_along(theta))
   }
-  se <- sqrt(pmax(diag(as.matrix(vcov_mat)), 0))
-  stat <- ifelse(se > 0, theta / se, NA_real_)
+  diag_v <- diag(as.matrix(vcov_mat))
+  se <- ifelse(is.na(diag_v), NA_real_, sqrt(pmax(diag_v, 0)))
+  stat <- ifelse(is.na(theta) | is.na(se) | se <= 0, NA_real_, theta / se)
   alpha <- 1 - conf_level
 
   if (is.finite(df) && df > 0) {
@@ -346,7 +385,6 @@ fit_glm_benchmark <- function(X, y, family_name, w = NULL) {
   if (is.null(w)) w <- rep(1, n)
   w <- w / mean(w)
 
-  # Reuse canonical objective solver with lambda = 0 (pure single-sample MLE)
   sol <- solve_ppi_glm_objective(
     X_lab = X, y_lab = y, yhat_lab = rep(0, n),
     X_unlab = X[1L, , drop = FALSE], yhat_unlab = 0,
@@ -359,9 +397,20 @@ fit_glm_benchmark <- function(X, y, family_name, w = NULL) {
   df_adj <- if (n > p) (n - 1) / (n - p) else 1
   V <- H_inv %*% ((df_adj / n) * safe_cov(G)) %*% H_inv
   V <- 0.5 * (V + t(V))
+  if (isTRUE(sol$separation)) {
+    V_fisher <- safe_solve(sol$hessian + diag(1e-10, p)) / n
+    diag(V) <- pmax(diag(V), pmax(diag(V_fisher), 0))
+  }
   dimnames(V) <- list(colnames(X), colnames(X))
 
-  list(theta = sol$theta, vcov = V, hessian = sol$hessian, scores = G)
+  list(
+    theta = sol$theta,
+    vcov = V,
+    hessian = sol$hessian,
+    scores = G,
+    separation = isTRUE(sol$separation),
+    converged = isTRUE(sol$converged)
+  )
 }
 
 #' Construct standardized `llm_ppi` S3 object
@@ -378,12 +427,21 @@ new_llm_ppi <- function(subclass,
                         conf_level,
                         df = Inf,
                         extra = list()) {
-  # Compute per-term variance reduction / effective sample size multiplier vs human_only
   hum_tbl <- benchmarks[benchmarks$method == "human_only", , drop = FALSE]
+  var_ratio <- ifelse(
+    is.na(estimates$std_error) | is.na(hum_tbl$std_error) | estimates$std_error <= 1e-14,
+    NA_real_,
+    (hum_tbl$std_error^2) / (estimates$std_error^2)
+  )
+  se_red <- ifelse(
+    is.na(estimates$std_error) | is.na(hum_tbl$std_error) | hum_tbl$std_error <= 1e-14,
+    NA_real_,
+    100 * (1 - estimates$std_error / hum_tbl$std_error)
+  )
   eff_tbl <- tibble::tibble(
     term = estimates$term,
-    var_ratio_vs_human = (hum_tbl$std_error^2) / pmax(estimates$std_error^2, 1e-16),
-    se_reduction_pct = 100 * (1 - estimates$std_error / pmax(hum_tbl$std_error, 1e-16))
+    var_ratio_vs_human = var_ratio,
+    se_reduction_pct = se_red
   )
 
   obj <- c(

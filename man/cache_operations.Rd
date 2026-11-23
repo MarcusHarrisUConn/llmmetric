@@ -25,13 +25,17 @@ cache_stats(cache)
 }
 \value{
 \itemize{
-\item \code{cache_get()} returns the cached object or \code{NULL} on a miss.
-\item \code{cache_set()} invisibly returns \code{TRUE} if written, \code{FALSE} if caching is disabled.
+\item \code{cache_get()} returns the cached object or \code{NULL} on a miss (or after
+gracefully evicting a corrupted disk entry).
+\item \code{cache_set()} invisibly returns \code{TRUE} if written, \code{FALSE} if caching is
+disabled.
 \item \code{cache_clear()} invisibly returns the cache object.
-\item \code{cache_stats()} returns a named list with \code{type}, \code{hits}, \code{misses}, \code{writes},
-and \code{entries}.
+\item \code{cache_stats()} returns a named list with \code{type}, \code{dir}, \code{hits}, \code{misses},
+\code{writes}, \code{evictions}, and \code{entries}.
 }
 }
 \description{
-Low-level helpers operating on an \code{\link[=coding_cache]{coding_cache()}} object.
+Low-level helpers operating on an \code{\link[=coding_cache]{coding_cache()}} object. All keys are
+validated strictly against path traversal and unsafe characters; disk cache
+writes are atomic and integrity-checked via SHA-256 checksums.
 }

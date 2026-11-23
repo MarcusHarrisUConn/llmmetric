@@ -12,6 +12,8 @@ backend_ollama(
   format = c("schema", "json", "none"),
   timeout = 120,
   max_retries = 2L,
+  backoff_base = 1,
+  max_response_bytes = 1048576L,
   options = list(),
   transport = NULL
 )
@@ -19,16 +21,21 @@ backend_ollama(
 \arguments{
 \item{model}{Default Ollama model tag (e.g., \code{"llama3.2"}, \code{"qwen2.5:7b"}).}
 
-\item{base_url}{Ollama base URL without trailing slash.}
+\item{base_url}{Ollama HTTP/HTTPS base URL without trailing slash.}
 
 \item{system_prompt}{Optional system instruction prepended to messages.}
 
 \item{format}{Structured output constraint: \code{"schema"} (sends full JSON
 Schema), \code{"json"} (sends \code{"json"}), or \code{"none"}.}
 
-\item{timeout}{Request timeout in seconds.}
+\item{timeout}{Request timeout in seconds. Default \code{120}.}
 
 \item{max_retries}{Maximum HTTP retry attempts on transient errors.}
+
+\item{backoff_base}{Base backoff seconds for jittered exponential retry.}
+
+\item{max_response_bytes}{Maximum allowed response payload size in bytes.
+Default \code{1048576L} (1 MiB).}
 
 \item{options}{Named list of additional Ollama model options (e.g., \code{seed},
 \code{num_ctx}).}
@@ -40,8 +47,9 @@ for offline testing.}
 An object of class \code{c("llm_backend_ollama", "llm_backend")}.
 }
 \description{
-Creates a backend targeting a local or remote Ollama server (\verb{/api/chat})
-via \code{httr2} with structured JSON/schema constraints and retry logic.
+Creates a hardened backend targeting a local or remote Ollama server
+(\verb{/api/chat}) via \code{httr2} with strict URL validation, bounded response
+sizes, structured JSON/schema constraints, and jittered backoff retries.
 }
 \examples{
 b <- backend_ollama(model = "llama3.2")

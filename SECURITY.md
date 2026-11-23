@@ -1,0 +1,25 @@
+# Security Policy & v0.2.0 Red-Team Hardening Audit
+
+`llmmetric` processes untrusted text responses from remote or local LLM endpoints, manages API credentials, persists disk caches, and computes statistical inference over potentially adversarial or degenerate data. This document records the threat model, vulnerabilities identified during the v0.2.0 internal red-team audit, and concrete mitigations enforced in code (`R/security.R`, `R/validate.R`).
+
+---
+
+## 1. Threat Model & Audit Findings
+
+| ID | Attack Surface | v0.1.0 Finding | v0.2.0 Mitigation |
+| :--- | :--- | :--- | :--- |
+| **S1** | **SSRF / Unsafe Endpoint URLs** (`backend_openai()`, `backend_ollama()`) | `base_url` accepted arbitrary non-HTTP schemes (`file:///etc/passwd`, `ftp://`), embedded credentials (`user:pass@host`), or control characters. | `validate_endpoint_url()` strictly enforces `http://` or `https://`, non-empty validated host, valid port `[1, 65535]`, and rejects whitespace, control characters, and embedded userinfo (`@`). |
+| **S2** | **HTTP Header CRLF Injection** (`backend_openai(extra_headers=)`) | User-supplied `extra_headers` were passed without control-character validation. | `validate_http_headers()` rejects `\r`, `\n`, control bytes, and invalid header names/values. |
+| **S3** | **API Credential Exposure** (`backend_openai()`) | Plaintext `api_key` was stored directly on the S3 backend list, exposing secrets via `str()`, `dput()`, `saveRDS()`, or unredacted HTTP error messages. | `new_redacted_secret()` stores raw credentials exclusively in a non-serialized session-scoped internal vault (`.llmmetric_secret_vault`). The backend object holds only an opaque `token_id` and prints `"<redacted>"`. Saved `.rds` files contain zero secret bytes, `cache_key()` never includes secrets, and `redact_secrets()` scrubs API keys and `Bearer` tokens from all caught transport/HTTP error messages. |
+| **S4** | **Response Size Exhaustion & Retry Storms** (`backend_openai()`, `backend_ollama()`) | HTTP responses had no byte cap, and retries used unjittered exponential backoff. | Enforces configurable `max_response_bytes` (default 1 MiB) before parsing and bounded jittered exponential backoff (`jittered_backoff()`) without mutating global `.Random.seed`. |
+| **S5** | **Untrusted / Prompt-Injected JSON Outputs** (`validate_coded_output()`) | Duplicate JSON keys (`{"score": 5, "score": 999}`) were silently accepted by `jsonlite`; trailing prose around fenced JSON failed or risked ambiguity; extreme/non-finite numeric strings required stricter rejection. | `extract_json_payload()` enforces a size limit (default 256 KiB), rejects disallowed control characters, cleanly extracts a single unambiguous JSON object or fenced block, and **rejects multiple conflicting JSON objects or multiple fenced blocks** (prompt-injection defense). `has_duplicate_json_keys()` rejects duplicate keys; non-finite tokens (`NaN`, `Inf`, `-Infinity`) and unsafe numeric magnitudes (`> 1e15`) are always rejected even when `coerce = TRUE`. |
+| **S6** | **Disk Cache Path Traversal & Tampering** (`coding_cache("disk")`) | Unvalidated keys (e.g., `../../evil`) allowed reading or writing `.rds` files outside `cache$dir`; non-atomic `saveRDS()` risked torn writes; corrupted entries lacked integrity verification. | `validate_cache_key_safe()` and `resolve_safe_cache_path()` block path separators, `..`, control chars, and directory escapes. Disk writes use atomic same-directory temp file + `file.rename()`. Every entry is wrapped in a version-2 integrity envelope with a SHA-256 payload checksum; corrupted or tampered files are automatically evicted with a warning and treated cleanly as cache misses. |
+| **S7** | **Numerical Hallucination & Degenerate Inference** (`g_study()`, `dpf_test()`, `ppi_*()`) | Constant zero-variance scores caused `g_study()` to divide IEEE-754 dust and report `G = 0.925`, and caused `dpf_test()` to report `delta_r2 = 0.499` with `lm` warnings. Exact collinearity in `ppi_lm()` silently split effects via pseudoinverse without warning; perfect separation in binomial `ppi_glm()` diverged (`beta = 304`) with collapsed SEs (`0.18`). | Centralized guards in `R/validate.R`: zero-variance guards in `g_study()`, `d_study()`, `calibration_metrics()`, `check_drift()`, and `dpf_test()`; QR-pivoted rank checks (`check_design_rank()`) dropping aliased columns cleanly with `NA` slots and warnings (matching `stats::lm()`); step-damped separation detection + Fisher information SE floor in `ppi_glm()`; exact separate-sample $\hat{\lambda}^*$ denominator `V_tilde_L + (n/N) * V_tilde_U`; finite-sample `t` reference df and warnings for small validation samples. |
+
+---
+
+## 2. Responsible Use & Reporting
+
+- Never pass untrusted user input directly into `base_url`, `extra_headers`, or `dir` without validation.
+- Store cloud API keys in environment variables (e.g., `OPENAI_API_KEY`) rather than hard-coding them in scripts.
+- Report suspected security issues at <https://github.com/MarcusHarrisUConn/llmmetric/issues>.

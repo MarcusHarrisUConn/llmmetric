@@ -125,7 +125,7 @@ d_study <- function(g_study,
   grid_tbl$phi_coef <- phi_vec
   grid_tbl$sem_relative <- sem_rel_vec
   grid_tbl$sem_absolute <- sem_abs_vec
-  grid_tbl$meets_target <- target_vals >= target
+  grid_tbl$meets_target <- !is.na(target_vals) & (target_vals >= target)
 
   # Identify minimal / Pareto-efficient designs achieving target
   ok_tbl <- grid_tbl[grid_tbl$meets_target, , drop = FALSE]
@@ -198,7 +198,8 @@ print.llm_d_study <- function(x, ...) {
     )
     print(x$recommendations, n = min(nrow(x$recommendations), 8L))
   } else {
-    max_val <- max(x$grid[[if (x$metric == "g") "g_coef" else "phi_coef"]])
+    vals_m <- x$grid[[if (x$metric == "g") "g_coef" else "phi_coef"]]
+    max_val <- if (all(is.na(vals_m))) NA_real_ else max(vals_m, na.rm = TRUE)
     cli::cli_alert_warning(
       "No design in the evaluated grid achieved {metric_label} >= {fmt_num(x$target, 2L)} (max achieved: {fmt_num(max_val)})."
     )

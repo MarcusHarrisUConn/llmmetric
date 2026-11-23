@@ -58,9 +58,9 @@ ppi_mean <- function(data,
 
   if (identical(lambda, "auto")) {
     cov_yf <- stats::cov(y_lab, f_lab)
-    var_f <- stats::var(c(f_lab, f_unlab))
-    lam_val <- if (is.finite(var_f) && var_f > 1e-12) {
-      cov_yf / ((1 + n / N) * var_f)
+    var_f_eff <- stats::var(f_lab) + (n / N) * stats::var(f_unlab)
+    lam_val <- if (is.finite(var_f_eff) && var_f_eff > 1e-12 && is.finite(cov_yf)) {
+      cov_yf / var_f_eff
     } else {
       0
     }
@@ -74,24 +74,33 @@ ppi_mean <- function(data,
     method_label <- if (abs(lam_val - 1) < 1e-12) "ppi" else paste0("ppi(lambda=", round(lam_val, 2L), ")")
   }
 
+  df_ref <- Inf
+  small_sample <- n < 20L
+  if (small_sample) {
+    df_ref <- max(n - 1L, 1L)
+    cli::cli_warn(
+      "Small labeled validation sample (n = {n}); using t({df_ref}) reference distribution for finite-sample inference."
+    )
+  }
+
   # PPI / PPI++ mean estimator & exact variance
   est_ppi <- mean(y_lab) + lam_val * (mean(f_unlab) - mean(f_lab))
   var_ppi <- stats::var(y_lab - lam_val * f_lab) / n + (lam_val^2) * stats::var(f_unlab) / N
 
   theta_ppi <- stats::setNames(est_ppi, "(Mean)")
-  V_ppi <- matrix(var_ppi, nrow = 1L, ncol = 1L, dimnames = list("(Mean)", "(Mean)"))
+  V_ppi <- matrix(max(var_ppi, 0), nrow = 1L, ncol = 1L, dimnames = list("(Mean)", "(Mean)"))
 
   # Benchmarks: human-only and naive LLM (all observations)
   est_hum <- stats::setNames(mean(y_lab), "(Mean)")
-  V_hum <- matrix(stats::var(y_lab) / n, 1L, 1L, dimnames = list("(Mean)", "(Mean)"))
+  V_hum <- matrix(max(stats::var(y_lab) / n, 0), 1L, 1L, dimnames = list("(Mean)", "(Mean)"))
 
   f_all <- c(f_lab, f_unlab)
   est_naive <- stats::setNames(mean(f_all), "(Mean)")
-  V_naive <- matrix(stats::var(f_all) / length(f_all), 1L, 1L, dimnames = list("(Mean)", "(Mean)"))
+  V_naive <- matrix(max(stats::var(f_all) / length(f_all), 0), 1L, 1L, dimnames = list("(Mean)", "(Mean)"))
 
-  tbl_ppi <- tidy_ppi_table(theta_ppi, V_ppi, method_label = method_label, conf_level = conf_level)
-  tbl_hum <- tidy_ppi_table(est_hum, V_hum, method_label = "human_only", conf_level = conf_level)
-  tbl_naive <- tidy_ppi_table(est_naive, V_naive, method_label = "naive_llm", conf_level = conf_level)
+  tbl_ppi <- tidy_ppi_table(theta_ppi, V_ppi, method_label = method_label, conf_level = conf_level, df = df_ref)
+  tbl_hum <- tidy_ppi_table(est_hum, V_hum, method_label = "human_only", conf_level = conf_level, df = df_ref)
+  tbl_naive <- tidy_ppi_table(est_naive, V_naive, method_label = "naive_llm", conf_level = conf_level, df = Inf)
 
   new_llm_ppi(
     subclass = "llm_ppi_mean",
@@ -104,7 +113,8 @@ ppi_mean <- function(data,
     n_labeled = n,
     n_unlabeled = N,
     conf_level = conf_level,
-    extra = list(truth_col = truth_col, pred_col = pred_col)
+    df = df_ref,
+    extra = list(truth_col = truth_col, pred_col = pred_col, small_sample = small_sample)
   )
 }
 
@@ -309,14 +319,40 @@ ppi_glm <- function(formula,
   )
 
   mats <- build_ppi_model_matrices(formula, sp$labeled, sp$unlabeled)
-  X_lab <- mats$X_lab
-  X_unlab <- mats$X_unlab
+  X_lab_full <- mats$X_lab
+  X_unlab_full <- mats$X_unlab
+
+  rank_info <- check_design_rank(X_lab_full, X_unlab_full)
+  if (!isTRUE(rank_info$full_rank)) {
+    cli::cli_warn(
+      "Rank-deficient design matrix detected; dropping aliased column{?s}: {.val {rank_info$aliased_cols}}."
+    )
+  }
+  X_lab <- X_lab_full[, rank_info$keep_idx, drop = FALSE]
+  X_unlab <- X_unlab_full[, rank_info$keep_idx, drop = FALSE]
+
   y_lab <- as.numeric(sp$labeled[[truth_col]])
   yhat_lab <- as.numeric(sp$labeled[[pred_col]])
   yhat_unlab <- as.numeric(sp$unlabeled[[pred_col]])
   n <- nrow(X_lab)
   N <- nrow(X_unlab)
+  p <- ncol(X_lab)
   ops <- canonical_glm_ops(fam_name)
+
+  if (n <= p) {
+    cli::cli_abort(
+      "Number of labeled observations (n = {n}) must exceed the number of identifiable model parameters (p = {p})."
+    )
+  }
+
+  df_ref <- Inf
+  small_sample <- n < max(20L, 2L * p + 5L)
+  if (small_sample) {
+    df_ref <- max(n - p, 1L)
+    cli::cli_warn(
+      "Small labeled validation sample (n = {n}, p = {p}); using t({df_ref}) reference distribution for finite-sample inference."
+    )
+  }
 
   # Benchmarks
   bench_hum <- fit_glm_benchmark(X_lab, y_lab, family_name = fam_name)
@@ -333,8 +369,12 @@ ppi_glm <- function(formula,
     lam_val <- 1
     method_label <- "ppi"
   } else {
-    # Optimal PPI++ lambda using pilot estimate (human-only MLE -> 1-step refined)
-    pilot <- bench_hum$theta
+    # Optimal PPI++ lambda using pilot estimate (fall back to naive_llm pilot if human_only separated)
+    pilot <- if (isTRUE(bench_hum$separation) && !isTRUE(bench_naive$separation)) {
+      bench_naive$theta
+    } else {
+      bench_hum$theta
+    }
     mu_L0 <- ops$mu(as.numeric(X_lab %*% pilot))
     mu_U0 <- ops$mu(as.numeric(X_unlab %*% pilot))
     G_L0 <- X_lab * (mu_L0 - y_lab)
@@ -347,6 +387,7 @@ ppi_glm <- function(formula,
   }
 
   # Solve PPI / PPI++ objective
+  start_th <- if (isTRUE(bench_hum$separation)) rep(0, p) else bench_hum$theta
   sol <- solve_ppi_glm_objective(
     X_lab = X_lab,
     y_lab = y_lab,
@@ -355,10 +396,17 @@ ppi_glm <- function(formula,
     yhat_unlab = yhat_unlab,
     family_name = fam_name,
     lambda = lam_val,
-    start = bench_hum$theta,
+    start = start_th,
     max_iter = as.integer(round(max_iter)),
     tol = tol
   )
+
+  sep_flag <- isTRUE(sol$separation)
+  if (sep_flag) {
+    cli::cli_warn(
+      "Quasi-complete separation or near-singular Hessian detected in {.val {fam_name}} GLM; estimates and standard errors may be unreliable."
+    )
+  }
 
   # Evaluate scores at final estimate for exact sandwich covariance
   mu_L <- ops$mu(as.numeric(X_lab %*% sol$theta))
@@ -367,35 +415,44 @@ ppi_glm <- function(formula,
   G_tilde_lab <- X_lab * (mu_L - yhat_lab)
   G_tilde_unlab <- X_unlab * (mu_U - yhat_unlab)
 
-  V_ppi <- compute_ppi_vcov_iid(
+  V_ppi_sub <- compute_ppi_vcov_iid(
     G_lab = G_lab,
     G_tilde_lab = G_tilde_lab,
     G_tilde_unlab = G_tilde_unlab,
     H = sol$hessian,
-    lambda = lam_val
+    lambda = lam_val,
+    separation = sep_flag
   )
 
-  tbl_ppi <- tidy_ppi_table(sol$theta, V_ppi, method_label = method_label, conf_level = conf_level)
-  tbl_hum <- tidy_ppi_table(bench_hum$theta, bench_hum$vcov, method_label = "human_only", conf_level = conf_level)
-  tbl_naive <- tidy_ppi_table(bench_naive$theta, bench_naive$vcov, method_label = "naive_llm", conf_level = conf_level)
+  exp_ppi <- expand_aliased_results(sol$theta, V_ppi_sub, rank_info)
+  exp_hum <- expand_aliased_results(bench_hum$theta, bench_hum$vcov, rank_info)
+  exp_naive <- expand_aliased_results(bench_naive$theta, bench_naive$vcov, rank_info)
+
+  tbl_ppi <- tidy_ppi_table(exp_ppi$theta, exp_ppi$vcov, method_label = method_label, conf_level = conf_level, df = df_ref)
+  tbl_hum <- tidy_ppi_table(exp_hum$theta, exp_hum$vcov, method_label = "human_only", conf_level = conf_level, df = df_ref)
+  tbl_naive <- tidy_ppi_table(exp_naive$theta, exp_naive$vcov, method_label = "naive_llm", conf_level = conf_level, df = Inf)
 
   new_llm_ppi(
     subclass = "llm_ppi_glm",
     estimates = tbl_ppi,
     benchmarks = rbind(tbl_ppi, tbl_hum, tbl_naive),
-    theta = sol$theta,
-    vcov_mat = V_ppi,
+    theta = exp_ppi$theta,
+    vcov_mat = exp_ppi$vcov,
     lambda = lam_val,
     method_label = method_label,
     n_labeled = n,
     n_unlabeled = N,
     conf_level = conf_level,
+    df = df_ref,
     extra = list(
       formula = formula,
       family = fam_name,
       pred_col = pred_col,
       converged = sol$converged,
-      iterations = sol$iterations
+      iterations = sol$iterations,
+      separation_detected = sep_flag,
+      aliased_terms = rank_info$aliased_cols,
+      small_sample = small_sample
     )
   )
 }
@@ -451,14 +508,27 @@ fit_ppi_calibrated_general <- function(formula, data, unlabeled, pred_map, famil
 
   truth_col <- all.vars(formula[[2L]])
   mats_h <- build_ppi_model_matrices(formula, lab_df, lab_surr)
-  X_hL <- mats_h$X_lab
+  X_hL_full <- mats_h$X_lab
   mats_s <- build_ppi_model_matrices(formula, lab_surr, unlab_surr)
-  X_sL <- mats_s$X_lab
-  X_sU <- mats_s$X_unlab
+  X_sL_full <- mats_s$X_lab
+  X_sU_full <- mats_s$X_unlab
+
+  rank_info <- check_design_rank(X_hL_full, X_sU_full)
+  if (!isTRUE(rank_info$full_rank)) {
+    cli::cli_warn(
+      "Rank-deficient design matrix detected; dropping aliased column{?s}: {.val {rank_info$aliased_cols}}."
+    )
+  }
+  X_hL <- X_hL_full[, rank_info$keep_idx, drop = FALSE]
+  X_sL <- X_sL_full[, rank_info$keep_idx, drop = FALSE]
+  X_sU <- X_sU_full[, rank_info$keep_idx, drop = FALSE]
 
   y_hL <- as.numeric(lab_df[[truth_col]])
   y_sL <- as.numeric(lab_surr[[truth_col]])
   y_sU <- as.numeric(unlab_surr[[truth_col]])
+  assert_finite_values(y_hL, truth_col)
+  assert_finite_values(y_sL, "LLM surrogate outcome (labeled)")
+  assert_finite_values(y_sU, "LLM surrogate outcome (unlabeled)")
 
   fit_hL <- fit_glm_benchmark(X_hL, y_hL, family_name = fam_name)
   fit_sL <- fit_glm_benchmark(X_sL, y_sL, family_name = fam_name)
@@ -476,30 +546,34 @@ fit_ppi_calibrated_general <- function(formula, data, unlabeled, pred_map, famil
   for (k in seq_len(p)) {
     cov_k <- stats::cov(psi_hL[, k], psi_sL[, k])
     var_k <- stats::var(psi_sL[, k]) + (n / N) * stats::var(psi_sU[, k])
-    lam_vec[k] <- if (is.finite(var_k) && var_k > 1e-12) cov_k / var_k else 0
+    lam_vec[k] <- if (is.finite(var_k) && var_k > 1e-12 && is.finite(cov_k)) cov_k / var_k else 0
   }
 
   Lambda <- diag(lam_vec, nrow = p, ncol = p)
-  theta_cal <- as.numeric(fit_hL$theta + Lambda %*% (fit_sU$theta - fit_sL$theta))
-  names(theta_cal) <- colnames(X_hL)
+  theta_cal_sub <- as.numeric(fit_hL$theta + Lambda %*% (fit_sU$theta - fit_sL$theta))
+  names(theta_cal_sub) <- colnames(X_hL)
 
   df_adj <- if (n > p) (n - 1) / (n - p) else 1
   diff_psi_L <- psi_hL - psi_sL %*% Lambda
-  V_cal <- (df_adj / n) * safe_cov(diff_psi_L) + (1 / N) * (Lambda %*% safe_cov(psi_sU) %*% Lambda)
-  V_cal <- 0.5 * (V_cal + t(V_cal))
-  dimnames(V_cal) <- list(colnames(X_hL), colnames(X_hL))
+  V_cal_sub <- (df_adj / n) * safe_cov(diff_psi_L) + (1 / N) * (Lambda %*% safe_cov(psi_sU) %*% Lambda)
+  V_cal_sub <- 0.5 * (V_cal_sub + t(V_cal_sub))
+  dimnames(V_cal_sub) <- list(colnames(X_hL), colnames(X_hL))
 
-  tbl_cal <- tidy_ppi_table(theta_cal, V_cal, method_label = "ppi_calibrated", conf_level = conf_level)
-  tbl_hum <- tidy_ppi_table(fit_hL$theta, fit_hL$vcov, method_label = "human_only", conf_level = conf_level)
-  tbl_naive <- tidy_ppi_table(fit_naive$theta, fit_naive$vcov, method_label = "naive_llm", conf_level = conf_level)
+  exp_cal <- expand_aliased_results(theta_cal_sub, V_cal_sub, rank_info)
+  exp_hum <- expand_aliased_results(fit_hL$theta, fit_hL$vcov, rank_info)
+  exp_naive <- expand_aliased_results(fit_naive$theta, fit_naive$vcov, rank_info)
+
+  tbl_cal <- tidy_ppi_table(exp_cal$theta, exp_cal$vcov, method_label = "ppi_calibrated", conf_level = conf_level)
+  tbl_hum <- tidy_ppi_table(exp_hum$theta, exp_hum$vcov, method_label = "human_only", conf_level = conf_level)
+  tbl_naive <- tidy_ppi_table(exp_naive$theta, exp_naive$vcov, method_label = "naive_llm", conf_level = conf_level)
 
   subclass <- if (fam_name == "gaussian") "llm_ppi_lm" else "llm_ppi_glm"
   new_llm_ppi(
     subclass = subclass,
     estimates = tbl_cal,
     benchmarks = rbind(tbl_cal, tbl_hum, tbl_naive),
-    theta = theta_cal,
-    vcov_mat = V_cal,
+    theta = exp_cal$theta,
+    vcov_mat = exp_cal$vcov,
     lambda = lam_vec,
     method_label = "ppi_calibrated",
     n_labeled = n,
@@ -508,7 +582,8 @@ fit_ppi_calibrated_general <- function(formula, data, unlabeled, pred_map, famil
     extra = list(
       formula = formula,
       family = fam_name,
-      pred_map = pred_map
+      pred_map = pred_map,
+      aliased_terms = rank_info$aliased_cols
     )
   )
 }

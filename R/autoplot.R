@@ -633,3 +633,83 @@ autoplot.llm_ppi <- function(object,
 
   p
 }
+
+#' Plot PPI++ Power or Standard Error Curves
+#'
+#' Visualizes projected PPI++ statistical power (when `effect` was supplied) or
+#' standard error reduction across human validation sample sizes `n_labeled`,
+#' directly compared against human-only estimation.
+#'
+#' @param object An `"llm_ppi_power"` object returned by [ppi_power()].
+#' @param metric `"auto"` (plots power when `effect` is available, else SE),
+#'   `"power"`, or `"se"`.
+#' @param ... Unused; included for S3 consistency.
+#'
+#' @return A `ggplot2::ggplot` object.
+#' @export
+#'
+#' @examples
+#' pw <- ppi_power(
+#'   n_labeled = seq(40, 200, by = 40),
+#'   n_total = 1500,
+#'   effect = 0.25,
+#'   sd = 1.2,
+#'   r = c(0.6, 0.8)
+#' )
+#' autoplot(pw)
+autoplot.llm_ppi_power <- function(object, metric = c("auto", "power", "se"), ...) {
+  metric <- match.arg(metric)
+  pal <- llmmetric_colors()
+  g <- object$grid
+
+  if (metric == "auto") {
+    metric <- if (!is.null(object$effect) && !all(is.na(g$power_ppi))) "power" else "se"
+  }
+  if (metric == "power" && all(is.na(g$power_ppi))) {
+    cli::cli_abort("Power plot requires {.arg effect} to have been supplied to {.fn ppi_power}.")
+  }
+
+  y_ppi <- if (metric == "power") g$power_ppi else g$se_ppi
+
+  df_ppi <- tibble::tibble(
+    n_labeled = g$n_labeled,
+    value = y_ppi,
+    curve = paste0("PPI++ (r = ", fmt_num(g$r, 2L), ")")
+  )
+  hum_sub <- g[!duplicated(g$n_labeled), , drop = FALSE]
+  df_hum <- tibble::tibble(
+    n_labeled = hum_sub$n_labeled,
+    value = if (metric == "power") hum_sub$power_human else hum_sub$se_human,
+    curve = "Human-Only"
+  )
+  plot_df <- rbind(df_ppi, df_hum)
+  curve_lvls <- c(unique(df_ppi$curve), "Human-Only")
+  plot_df$curve <- factor(plot_df$curve, levels = curve_lvls)
+
+  p <- ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(x = .data$n_labeled, y = .data$value, color = .data$curve, linetype = .data$curve)
+  ) +
+    ggplot2::geom_line(linewidth = 0.95) +
+    ggplot2::geom_point(size = 2.1) +
+    ggplot2::labs(
+      title = if (metric == "power") "PPI++ vs. Human-Only Statistical Power" else "PPI++ vs. Human-Only Standard Error",
+      subtitle = paste0(
+        "sd = ", fmt_num(object$params$sd),
+        if (!is.null(object$effect)) paste0(" | effect = ", fmt_num(object$effect), " | alpha = ", object$alpha) else ""
+      ),
+      x = "Human Validation Sample Size (n_labeled)",
+      y = if (metric == "power") "Two-Sided Power" else "Standard Error",
+      color = "Design",
+      linetype = "Design"
+    ) +
+    theme_llmmetric()
+
+  if (metric == "power") {
+    p <- p +
+      ggplot2::geom_hline(yintercept = 0.80, linetype = "dashed", color = unname(pal["slate"]), linewidth = 0.65) +
+      ggplot2::scale_y_continuous(limits = c(0, 1.02))
+  }
+
+  p
+}

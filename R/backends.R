@@ -303,21 +303,28 @@ backend_score.llm_backend_mock <- function(backend, request, ...) {
 
 #' OpenAI-Compatible HTTP Coding Backend
 #'
-#' Creates a backend targeting any OpenAI-compatible `/chat/completions` API
-#' (OpenAI, Azure OpenAI proxies, vLLM, OpenRouter, Together, LiteLLM, or local
-#' servers) using `httr2` with automatic retry and exponential backoff.
+#' Creates a hardened backend targeting any OpenAI-compatible
+#' `/chat/completions` API (OpenAI, Azure OpenAI proxies, vLLM, OpenRouter,
+#' Together, LiteLLM, or local servers) using `httr2` with strict URL/header
+#' validation, sealed API-key redaction, bounded response sizes, and jittered
+#' exponential backoff retries.
 #'
 #' @param model Default model identifier (overridden by design model column
 #'   when `code_texts()` runs multi-model designs).
-#' @param api_key API key string. Defaults to `Sys.getenv("OPENAI_API_KEY")`.
-#' @param base_url Base API URL without trailing slash.
+#' @param api_key API key string (wrapped in a non-printable redacted container;
+#'   never echoed in `print()`, `summary()`, cache keys, or errors). Defaults to
+#'   `Sys.getenv("OPENAI_API_KEY")`.
+#' @param base_url Base HTTP/HTTPS API URL without trailing slash.
 #' @param system_prompt Optional system instruction prepended to every request.
 #' @param response_format Structured output mode: `"json_schema"` (default),
 #'   `"json_object"`, or `"none"`.
-#' @param timeout Request timeout in seconds.
+#' @param timeout Request timeout in seconds. Default `60`.
 #' @param max_retries Maximum HTTP retry attempts on transient errors.
-#' @param backoff_base Base backoff seconds for exponential retry.
-#' @param extra_headers Optional named list of additional HTTP headers.
+#' @param backoff_base Base backoff seconds for jittered exponential retry.
+#' @param max_response_bytes Maximum allowed response payload size in bytes.
+#'   Default `1048576L` (1 MiB).
+#' @param extra_headers Optional named list of additional HTTP headers (checked
+#'   against CRLF/control-character injection).
 #' @param extra_body Optional named list merged into the JSON request body.
 #' @param transport Optional custom transport function `function(req_spec)`
 #'   returning a parsed list response (intended for offline testing/mocking).
@@ -336,21 +343,24 @@ backend_openai <- function(model = "gpt-4o-mini",
                            timeout = 60,
                            max_retries = 3L,
                            backoff_base = 1,
+                           max_response_bytes = 1048576L,
                            extra_headers = list(),
                            extra_body = list(),
                            transport = NULL) {
   assert_scalar_character(model, "model")
-  assert_scalar_character(base_url, "base_url")
+  base_url <- validate_endpoint_url(base_url, arg = "base_url")
   assert_scalar_character(system_prompt, "system_prompt", allow_null = TRUE)
   response_format <- match.arg(response_format)
-  assert_scalar_numeric(timeout, "timeout", min = 1)
-  assert_scalar_numeric(max_retries, "max_retries", min = 0)
-  assert_scalar_numeric(backoff_base, "backoff_base", min = 0)
+  assert_scalar_numeric(timeout, "timeout", min = 1, max = 3600)
+  assert_scalar_numeric(max_retries, "max_retries", min = 0, max = 20)
+  assert_scalar_numeric(backoff_base, "backoff_base", min = 0, max = 60)
+  assert_scalar_numeric(max_response_bytes, "max_response_bytes", min = 1024)
+  extra_headers <- validate_http_headers(extra_headers, arg = "extra_headers")
   if (!is.null(transport) && !is.function(transport)) {
     cli::cli_abort("{.arg transport} must be a function or NULL.")
   }
 
-  base_url <- sub("/+$", "", base_url)
+  secret_box <- new_redacted_secret(api_key)
   id_hash <- digest::digest(
     list("openai", base_url, system_prompt, response_format, extra_body),
     algo = "sha256"
@@ -361,13 +371,14 @@ backend_openai <- function(model = "gpt-4o-mini",
       backend_type = "openai",
       id = paste0("openai_", substr(id_hash, 1L, 12L)),
       model = model,
-      api_key = api_key,
+      api_key = secret_box,
       base_url = base_url,
       system_prompt = system_prompt,
       response_format = response_format,
       timeout = timeout,
       max_retries = as.integer(max_retries),
       backoff_base = backoff_base,
+      max_response_bytes = as.integer(round(max_response_bytes)),
       extra_headers = extra_headers,
       extra_body = extra_body,
       transport = transport
@@ -419,9 +430,10 @@ build_openai_request_spec <- function(backend, request) {
     body <- utils::modifyList(body, backend$extra_body)
   }
 
+  secret_val <- reveal_secret(backend$api_key)
   headers <- c(
     list(
-      Authorization = paste("Bearer", backend$api_key),
+      Authorization = paste("Bearer", secret_val),
       `Content-Type` = "application/json"
     ),
     backend$extra_headers
@@ -433,7 +445,8 @@ build_openai_request_spec <- function(backend, request) {
     body = body,
     timeout = backend$timeout,
     max_retries = backend$max_retries,
-    backoff_base = backend$backoff_base
+    backoff_base = backend$backoff_base,
+    max_response_bytes = backend$max_response_bytes %||% 1048576L
   )
 }
 
@@ -441,11 +454,19 @@ build_openai_request_spec <- function(backend, request) {
 backend_score.llm_backend_openai <- function(backend, request, ...) {
   t0 <- proc.time()[["elapsed"]]
   spec <- build_openai_request_spec(backend, request)
+  secret_val <- reveal_secret(backend$api_key)
 
   if (!is.null(backend$transport)) {
-    parsed <- backend$transport(spec)
+    parsed <- tryCatch(
+      backend$transport(spec),
+      error = function(e) {
+        cli::cli_abort(
+          paste0("OpenAI transport error: ", redact_secrets(conditionMessage(e), secrets = secret_val))
+        )
+      }
+    )
   } else {
-    if (!nzchar(backend$api_key)) {
+    if (!nzchar(secret_val)) {
       cli::cli_abort(
         "OpenAI API key is empty. Supply {.arg api_key} or set the {.envvar OPENAI_API_KEY} environment variable."
       )
@@ -458,11 +479,20 @@ backend_score.llm_backend_openai <- function(backend, request, ...) {
       req <- httr2::req_retry(
         req,
         max_tries = spec$max_retries + 1L,
-        backoff = function(attempt) spec$backoff_base * (2^(attempt - 1L))
+        backoff = function(attempt) jittered_backoff(attempt, base = spec$backoff_base)
       )
     }
-    resp <- httr2::req_perform(req)
-    parsed <- httr2::resp_body_json(resp, simplifyVector = FALSE)
+    resp <- tryCatch(
+      httr2::req_perform(req),
+      error = function(e) {
+        cli::cli_abort(
+          paste0("OpenAI request failed: ", redact_secrets(conditionMessage(e), secrets = secret_val))
+        )
+      }
+    )
+    raw_body <- httr2::resp_body_raw(resp)
+    check_response_size(raw_body, max_bytes = spec$max_response_bytes)
+    parsed <- jsonlite::fromJSON(rawToChar(raw_body), simplifyVector = FALSE)
   }
 
   content <- NULL
@@ -473,6 +503,9 @@ backend_score.llm_backend_openai <- function(backend, request, ...) {
   }
   if (is.null(content)) {
     cli::cli_abort("OpenAI backend response did not contain {.field choices[[1]]$message$content}.")
+  }
+  if (is.character(content)) {
+    check_response_size(content, max_bytes = spec$max_response_bytes)
   }
 
   list(
@@ -485,16 +518,20 @@ backend_score.llm_backend_openai <- function(backend, request, ...) {
 
 #' Local Ollama HTTP Coding Backend
 #'
-#' Creates a backend targeting a local or remote Ollama server (`/api/chat`)
-#' via `httr2` with structured JSON/schema constraints and retry logic.
+#' Creates a hardened backend targeting a local or remote Ollama server
+#' (`/api/chat`) via `httr2` with strict URL validation, bounded response
+#' sizes, structured JSON/schema constraints, and jittered backoff retries.
 #'
 #' @param model Default Ollama model tag (e.g., `"llama3.2"`, `"qwen2.5:7b"`).
-#' @param base_url Ollama base URL without trailing slash.
+#' @param base_url Ollama HTTP/HTTPS base URL without trailing slash.
 #' @param system_prompt Optional system instruction prepended to messages.
 #' @param format Structured output constraint: `"schema"` (sends full JSON
 #'   Schema), `"json"` (sends `"json"`), or `"none"`.
-#' @param timeout Request timeout in seconds.
+#' @param timeout Request timeout in seconds. Default `120`.
 #' @param max_retries Maximum HTTP retry attempts on transient errors.
+#' @param backoff_base Base backoff seconds for jittered exponential retry.
+#' @param max_response_bytes Maximum allowed response payload size in bytes.
+#'   Default `1048576L` (1 MiB).
 #' @param options Named list of additional Ollama model options (e.g., `seed`,
 #'   `num_ctx`).
 #' @param transport Optional custom transport function `function(req_spec)`
@@ -512,19 +549,22 @@ backend_ollama <- function(model = "llama3.2",
                            format = c("schema", "json", "none"),
                            timeout = 120,
                            max_retries = 2L,
+                           backoff_base = 1,
+                           max_response_bytes = 1048576L,
                            options = list(),
                            transport = NULL) {
   assert_scalar_character(model, "model")
-  assert_scalar_character(base_url, "base_url")
+  base_url <- validate_endpoint_url(base_url, arg = "base_url")
   assert_scalar_character(system_prompt, "system_prompt", allow_null = TRUE)
   format <- match.arg(format)
-  assert_scalar_numeric(timeout, "timeout", min = 1)
-  assert_scalar_numeric(max_retries, "max_retries", min = 0)
+  assert_scalar_numeric(timeout, "timeout", min = 1, max = 3600)
+  assert_scalar_numeric(max_retries, "max_retries", min = 0, max = 20)
+  assert_scalar_numeric(backoff_base, "backoff_base", min = 0, max = 60)
+  assert_scalar_numeric(max_response_bytes, "max_response_bytes", min = 1024)
   if (!is.null(transport) && !is.function(transport)) {
     cli::cli_abort("{.arg transport} must be a function or NULL.")
   }
 
-  base_url <- sub("/+$", "", base_url)
   id_hash <- digest::digest(
     list("ollama", base_url, system_prompt, format, options),
     algo = "sha256"
@@ -540,6 +580,8 @@ backend_ollama <- function(model = "llama3.2",
       format = format,
       timeout = timeout,
       max_retries = as.integer(max_retries),
+      backoff_base = backoff_base,
+      max_response_bytes = as.integer(round(max_response_bytes)),
       options = options,
       transport = transport
     ),
@@ -589,7 +631,9 @@ build_ollama_request_spec <- function(backend, request) {
     url = paste0(backend$base_url, "/api/chat"),
     body = body,
     timeout = backend$timeout,
-    max_retries = backend$max_retries
+    max_retries = backend$max_retries,
+    backoff_base = backend$backoff_base %||% 1,
+    max_response_bytes = backend$max_response_bytes %||% 1048576L
   )
 }
 
@@ -605,10 +649,16 @@ backend_score.llm_backend_ollama <- function(backend, request, ...) {
     req <- httr2::req_body_json(req, spec$body, auto_unbox = TRUE)
     req <- httr2::req_timeout(req, spec$timeout)
     if (spec$max_retries > 0L) {
-      req <- httr2::req_retry(req, max_tries = spec$max_retries + 1L)
+      req <- httr2::req_retry(
+        req,
+        max_tries = spec$max_retries + 1L,
+        backoff = function(attempt) jittered_backoff(attempt, base = spec$backoff_base)
+      )
     }
     resp <- httr2::req_perform(req)
-    parsed <- httr2::resp_body_json(resp, simplifyVector = FALSE)
+    raw_body <- httr2::resp_body_raw(resp)
+    check_response_size(raw_body, max_bytes = spec$max_response_bytes)
+    parsed <- jsonlite::fromJSON(rawToChar(raw_body), simplifyVector = FALSE)
   }
 
   content <- NULL
@@ -619,6 +669,9 @@ backend_score.llm_backend_ollama <- function(backend, request, ...) {
   }
   if (is.null(content)) {
     cli::cli_abort("Ollama backend response did not contain {.field message$content}.")
+  }
+  if (is.character(content)) {
+    check_response_size(content, max_bytes = spec$max_response_bytes)
   }
 
   list(
@@ -640,8 +693,18 @@ print.llm_backend <- function(x, ...) {
     cli::cli_text(
       "Facet SDs: prompt={x$prompt_sd}, model={x$model_sd}, u:p={x$unit_prompt_sd}, u:m={x$unit_model_sd}, p:m={x$prompt_model_sd}"
     )
+  } else if (inherits(x, "llm_backend_openai")) {
+    cli::cli_text(
+      "Model: {x$model} | Endpoint: {x$base_url} | API key: {format(x$api_key)} | Timeout: {x$timeout}s"
+    )
   } else {
-    cli::cli_text("Model: {x$model} | Endpoint: {x$base_url}")
+    cli::cli_text("Model: {x$model} | Endpoint: {x$base_url} | Timeout: {x$timeout}s")
   }
   invisible(x)
+}
+
+#' @export
+summary.llm_backend <- function(object, ...) {
+  print(object, ...)
+  invisible(object)
 }

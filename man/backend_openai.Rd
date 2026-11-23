@@ -14,6 +14,7 @@ backend_openai(
   timeout = 60,
   max_retries = 3L,
   backoff_base = 1,
+  max_response_bytes = 1048576L,
   extra_headers = list(),
   extra_body = list(),
   transport = NULL
@@ -23,22 +24,28 @@ backend_openai(
 \item{model}{Default model identifier (overridden by design model column
 when \code{code_texts()} runs multi-model designs).}
 
-\item{api_key}{API key string. Defaults to \code{Sys.getenv("OPENAI_API_KEY")}.}
+\item{api_key}{API key string (wrapped in a non-printable redacted container;
+never echoed in \code{print()}, \code{summary()}, cache keys, or errors). Defaults to
+\code{Sys.getenv("OPENAI_API_KEY")}.}
 
-\item{base_url}{Base API URL without trailing slash.}
+\item{base_url}{Base HTTP/HTTPS API URL without trailing slash.}
 
 \item{system_prompt}{Optional system instruction prepended to every request.}
 
 \item{response_format}{Structured output mode: \code{"json_schema"} (default),
 \code{"json_object"}, or \code{"none"}.}
 
-\item{timeout}{Request timeout in seconds.}
+\item{timeout}{Request timeout in seconds. Default \code{60}.}
 
 \item{max_retries}{Maximum HTTP retry attempts on transient errors.}
 
-\item{backoff_base}{Base backoff seconds for exponential retry.}
+\item{backoff_base}{Base backoff seconds for jittered exponential retry.}
 
-\item{extra_headers}{Optional named list of additional HTTP headers.}
+\item{max_response_bytes}{Maximum allowed response payload size in bytes.
+Default \code{1048576L} (1 MiB).}
+
+\item{extra_headers}{Optional named list of additional HTTP headers (checked
+against CRLF/control-character injection).}
 
 \item{extra_body}{Optional named list merged into the JSON request body.}
 
@@ -49,9 +56,11 @@ returning a parsed list response (intended for offline testing/mocking).}
 An object of class \code{c("llm_backend_openai", "llm_backend")}.
 }
 \description{
-Creates a backend targeting any OpenAI-compatible \verb{/chat/completions} API
-(OpenAI, Azure OpenAI proxies, vLLM, OpenRouter, Together, LiteLLM, or local
-servers) using \code{httr2} with automatic retry and exponential backoff.
+Creates a hardened backend targeting any OpenAI-compatible
+\verb{/chat/completions} API (OpenAI, Azure OpenAI proxies, vLLM, OpenRouter,
+Together, LiteLLM, or local servers) using \code{httr2} with strict URL/header
+validation, sealed API-key redaction, bounded response sizes, and jittered
+exponential backoff retries.
 }
 \examples{
 b <- backend_openai(model = "gpt-4o-mini", api_key = "demo-key")

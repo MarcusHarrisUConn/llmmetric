@@ -4,15 +4,20 @@
 \alias{validate_coded_output}
 \title{Validate and Parse Structured LLM Output Against a Coding Schema}
 \usage{
-validate_coded_output(x, schema, coerce = FALSE)
+validate_coded_output(x, schema, coerce = FALSE, max_bytes = 262144L)
 }
 \arguments{
 \item{x}{A JSON character string or a named R list.}
 
 \item{schema}{An object of class \code{"llm_coding_schema"}.}
 
-\item{coerce}{Logical; if \code{TRUE}, allows safe coercion of numeric strings
-(e.g. \code{"4.5"} to \code{4.5}) and boolean strings. Default \code{FALSE} (strict).}
+\item{coerce}{Logical; if \code{TRUE}, allows safe coercion of finite numeric
+strings (e.g. \code{"4.5"} to \code{4.5}) and boolean strings. Non-finite strings
+such as \code{"NaN"}, \code{"Inf"}, or \code{"-Infinity"} are always rejected. Default
+\code{FALSE} (strict).}
+
+\item{max_bytes}{Maximum allowed byte length of a raw JSON response string.
+Default \code{262144L} (256 KiB).}
 }
 \value{
 A list with elements:
@@ -23,8 +28,10 @@ A list with elements:
 }
 }
 \description{
-Parses a JSON string (stripping optional markdown code fences) or validates
-an already-parsed R named list against an \code{\link[=coding_schema]{coding_schema()}}.
+Parses a JSON string (hardened against prompt-injected multi-block payloads,
+duplicate keys, oversized responses, control characters, and non-finite
+values) or validates an already-parsed R named list against an
+\code{\link[=coding_schema]{coding_schema()}}.
 }
 \examples{
 s <- coding_schema(score = schema_field("integer", min = 1, max = 5))

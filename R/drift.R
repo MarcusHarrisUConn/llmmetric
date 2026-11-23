@@ -70,6 +70,10 @@ check_drift <- function(data,
     keep <- !is.na(df[[score_col]]) & !is.na(df[[version_col]]) & !is.na(df[[id_col]])
     df <- df[keep, req_cols, drop = FALSE]
   }
+  assert_finite_values(df[[score_col]], score_col)
+  if (!is.null(truth_col)) {
+    assert_finite_values(df[[truth_col]], truth_col)
+  }
 
   # Collapse multiple ratings per (unit_id, version) to mean cell score
   cell_df <- aggregate_scores(df, score_col = score_col, id_col = id_col, by = version_col)
@@ -107,14 +111,19 @@ check_drift <- function(data,
   overall_df <- cell_df
   overall_df$y <- as.numeric(overall_df[[score_col]])
   has_multi_units <- length(unique(overall_df$unit_chr)) >= 2L
-  if (has_multi_units) {
+  if (has_multi_units && !is_constant_numeric(overall_df$y)) {
     fit_full <- stats::lm(y ~ unit_chr + version_chr, data = overall_df)
     fit_null <- stats::lm(y ~ unit_chr, data = overall_df)
-    anv <- stats::anova(fit_null, fit_full)
+    anv <- suppressWarnings(stats::anova(fit_null, fit_full))
     overall_f <- as.numeric(anv$F[2L])
     overall_df1 <- as.numeric(anv$Df[2L])
     overall_df2 <- as.numeric(anv$Res.Df[2L])
     overall_p <- as.numeric(anv$`Pr(>F)`[2L])
+  } else if (has_multi_units && is_constant_numeric(overall_df$y)) {
+    overall_f <- 0
+    overall_df1 <- length(versions) - 1
+    overall_df2 <- max(nrow(overall_df) - length(unique(overall_df$unit_chr)) - overall_df1, 1)
+    overall_p <- 1
   } else {
     overall_f <- NA_real_
     overall_df1 <- NA_real_

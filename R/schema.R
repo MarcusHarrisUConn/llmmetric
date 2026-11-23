@@ -201,27 +201,21 @@ as_json_schema <- function(schema) {
   )
 }
 
-#' Strip optional markdown JSON code fences from raw LLM text
-#' @noRd
-strip_json_fences <- function(txt) {
-  txt <- trimws(txt)
-  if (grepl("^```", txt)) {
-    txt <- sub("^```[a-zA-Z0-9_-]*\\s*", "", txt)
-    txt <- sub("\\s*```$", "", txt)
-    txt <- trimws(txt)
-  }
-  txt
-}
-
 #' Validate and Parse Structured LLM Output Against a Coding Schema
 #'
-#' Parses a JSON string (stripping optional markdown code fences) or validates
-#' an already-parsed R named list against an [coding_schema()].
+#' Parses a JSON string (hardened against prompt-injected multi-block payloads,
+#' duplicate keys, oversized responses, control characters, and non-finite
+#' values) or validates an already-parsed R named list against an
+#' [coding_schema()].
 #'
 #' @param x A JSON character string or a named R list.
 #' @param schema An object of class `"llm_coding_schema"`.
-#' @param coerce Logical; if `TRUE`, allows safe coercion of numeric strings
-#'   (e.g. `"4.5"` to `4.5`) and boolean strings. Default `FALSE` (strict).
+#' @param coerce Logical; if `TRUE`, allows safe coercion of finite numeric
+#'   strings (e.g. `"4.5"` to `4.5`) and boolean strings. Non-finite strings
+#'   such as `"NaN"`, `"Inf"`, or `"-Infinity"` are always rejected. Default
+#'   `FALSE` (strict).
+#' @param max_bytes Maximum allowed byte length of a raw JSON response string.
+#'   Default `262144L` (256 KiB).
 #'
 #' @return A list with elements:
 #'   - `valid`: logical scalar indicating whether validation succeeded.
@@ -233,17 +227,22 @@ strip_json_fences <- function(txt) {
 #' s <- coding_schema(score = schema_field("integer", min = 1, max = 5))
 #' validate_coded_output('{"score": 4}', s)
 #' validate_coded_output('{"score": 9}', s)
-validate_coded_output <- function(x, schema, coerce = FALSE) {
+validate_coded_output <- function(x, schema, coerce = FALSE, max_bytes = 262144L) {
   if (!inherits(schema, "llm_coding_schema")) {
     cli::cli_abort("{.arg schema} must be an {.cls llm_coding_schema} object.")
   }
   assert_flag(coerce, "coerce")
+  assert_scalar_numeric(max_bytes, "max_bytes", min = 16)
+  max_bytes <- as.integer(round(max_bytes))
 
   parsed <- NULL
   if (is.character(x) && length(x) == 1L) {
-    cleaned <- strip_json_fences(x)
+    extracted <- extract_json_payload(x, max_bytes = max_bytes)
+    if (!isTRUE(extracted$ok)) {
+      return(list(valid = FALSE, data = NULL, errors = extracted$error))
+    }
     parsed <- tryCatch(
-      jsonlite::fromJSON(cleaned, simplifyVector = FALSE),
+      jsonlite::fromJSON(extracted$json, simplifyVector = FALSE),
       error = function(e) {
         structure(list(message = conditionMessage(e)), class = "json_parse_error")
       }
@@ -270,6 +269,14 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
       valid = FALSE,
       data = NULL,
       errors = "Parsed JSON must be an object (key-value map)."
+    ))
+  }
+
+  if (has_duplicate_json_keys(parsed)) {
+    return(list(
+      valid = FALSE,
+      data = NULL,
+      errors = "Duplicate JSON key(s) detected (rejected to prevent key-smuggling attacks)."
     ))
   }
 
@@ -306,7 +313,8 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
     }
 
     val <- parsed[[nm]]
-    is_null_val <- is.null(val) || (length(val) == 1L && is.na(val))
+    is_null_val <- is.null(val) || (length(val) == 1L && is.logical(val) && is.na(val)) ||
+      (length(val) == 1L && !is.list(val) && !is.character(val) && is.na(val) && !is.nan(val))
     if (is_null_val) {
       if (isTRUE(f$nullable)) {
         out[[nm]] <- switch(
@@ -333,7 +341,12 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
       if (is.numeric(val) && !is.logical(val)) {
         num_val <- as.numeric(val)
       } else if (isTRUE(coerce) && is.character(val)) {
-        num_val <- suppressWarnings(as.numeric(val))
+        v_trim <- trimws(val)
+        if (tolower(v_trim) %in% c("nan", "inf", "-inf", "+inf", "infinity", "-infinity", "+infinity", "na")) {
+          errors <- c(errors, paste0("Field '", nm, "' contains non-finite numeric token '", val, "'."))
+          next
+        }
+        num_val <- suppressWarnings(as.numeric(v_trim))
         if (is.na(num_val)) {
           errors <- c(errors, paste0("Field '", nm, "' could not be coerced to numeric."))
           next
@@ -344,6 +357,11 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
       }
       if (!is.finite(num_val)) {
         errors <- c(errors, paste0("Field '", nm, "' must be finite."))
+        next
+      }
+      abs_cap <- max(1e15, abs(f$min %||% 0), abs(f$max %||% 0))
+      if (abs(num_val) > abs_cap) {
+        errors <- c(errors, paste0("Field '", nm, "' exceeds safe finite magnitude limit."))
         next
       }
       if (!is.null(f$min) && num_val < f$min) {
@@ -359,7 +377,12 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
       if (is.numeric(val) && !is.logical(val)) {
         num_val <- as.numeric(val)
       } else if (isTRUE(coerce) && is.character(val)) {
-        num_val <- suppressWarnings(as.numeric(val))
+        v_trim <- trimws(val)
+        if (tolower(v_trim) %in% c("nan", "inf", "-inf", "+inf", "infinity", "-infinity", "+infinity", "na")) {
+          errors <- c(errors, paste0("Field '", nm, "' contains non-finite integer token '", val, "'."))
+          next
+        }
+        num_val <- suppressWarnings(as.numeric(v_trim))
         if (is.na(num_val)) {
           errors <- c(errors, paste0("Field '", nm, "' could not be coerced to integer."))
           next
@@ -368,8 +391,8 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
         errors <- c(errors, paste0("Field '", nm, "' must be an integer."))
         next
       }
-      if (!is.finite(num_val) || abs(num_val - round(num_val)) > 1e-8) {
-        errors <- c(errors, paste0("Field '", nm, "' (", num_val, ") is not an integer."))
+      if (!is.finite(num_val) || abs(num_val) > .Machine$integer.max || abs(num_val - round(num_val)) > 1e-8) {
+        errors <- c(errors, paste0("Field '", nm, "' (", num_val, ") is not a valid finite integer."))
         next
       }
       int_val <- as.integer(round(num_val))
@@ -384,7 +407,7 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
       out[[nm]] <- int_val
     } else if (f$type == "factor") {
       if (!is.character(val)) {
-        if (isTRUE(coerce)) {
+        if (isTRUE(coerce) && !is.logical(val)) {
           val <- as.character(val)
         } else {
           errors <- c(errors, paste0("Field '", nm, "' must be a character label."))
@@ -403,18 +426,18 @@ validate_coded_output <- function(x, schema, coerce = FALSE) {
       }
       out[[nm]] <- factor(val, levels = f$levels)
     } else if (f$type == "logical") {
-      if (is.logical(val)) {
+      if (is.logical(val) && !is.na(val)) {
         out[[nm]] <- val
-      } else if (isTRUE(coerce) && is.character(val) && tolower(val) %in% c("true", "false")) {
-        out[[nm]] <- tolower(val) == "true"
+      } else if (isTRUE(coerce) && is.character(val) && tolower(trimws(val)) %in% c("true", "false")) {
+        out[[nm]] <- tolower(trimws(val)) == "true"
       } else {
         errors <- c(errors, paste0("Field '", nm, "' must be logical (boolean)."))
         next
       }
     } else if (f$type == "character") {
-      if (is.character(val)) {
+      if (is.character(val) && !is.na(val)) {
         out[[nm]] <- val
-      } else if (isTRUE(coerce)) {
+      } else if (isTRUE(coerce) && !is.na(val)) {
         out[[nm]] <- as.character(val)
       } else {
         errors <- c(errors, paste0("Field '", nm, "' must be a character string."))

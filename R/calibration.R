@@ -83,6 +83,10 @@ calibration_metrics <- function(data,
       "categorical"
     }
   }
+  if (type == "continuous") {
+    assert_finite_values(df[[pred_col]], pred_col)
+    assert_finite_values(df[[truth_col]], truth_col)
+  }
 
   compute_one <- if (type == "continuous") {
     compute_continuous_calibration
@@ -200,22 +204,22 @@ compute_continuous_calibration <- function(pred, truth) {
   cal_f_stat <- NA_real_
   cal_p_value <- NA_real_
 
-  if (n >= 3L && !is.na(sd_p) && sd_p > 0) {
+  if (n >= 3L && !is_constant_numeric(p) && !is_constant_numeric(t)) {
     fit <- stats::lm(t ~ p)
     cf <- stats::coef(fit)
     cal_intercept <- unname(cf[1L])
     cal_slope <- unname(cf[2L])
-    r_squared <- summary(fit)$r.squared
+    r_squared <- suppressWarnings(summary(fit)$r.squared)
 
     # Joint F-test for H0: (intercept = 0, slope = 1)
     rss0 <- sum((t - p)^2)
     rss1 <- sum(stats::residuals(fit)^2)
     df2 <- n - 2L
-    if (df2 > 0L && rss1 > 0) {
+    if (df2 > 0L && rss1 > 1e-12 * max(rss0, 1)) {
       cal_f_stat <- ((rss0 - rss1) / 2) / (rss1 / df2)
       cal_f_stat <- max(cal_f_stat, 0)
       cal_p_value <- stats::pf(cal_f_stat, df1 = 2, df2 = df2, lower.tail = FALSE)
-    } else if (rss1 == 0 && rss0 == 0) {
+    } else if (rss1 <= 1e-12 && rss0 <= 1e-12) {
       cal_f_stat <- 0
       cal_p_value <- 1
     }
@@ -305,7 +309,7 @@ compute_categorical_calibration <- function(pred, truth, ordinal = FALSE) {
     denom <- 2 * tp + fp + fn
     if (denom == 0) NA_real_ else (2 * tp) / denom
   }, numeric(1L))
-  macro_f1 <- mean(f1_vals, na.rm = TRUE)
+  macro_f1 <- if (all(is.na(f1_vals))) NA_real_ else mean(f1_vals, na.rm = TRUE)
 
   # Cohen's Kappa (unweighted, linear-weighted, quadratic-weighted)
   P_obs <- cm_mat / n
@@ -316,7 +320,7 @@ compute_categorical_calibration <- function(pred, truth, ordinal = FALSE) {
   calc_kappa <- function(W_disagree) {
     d_o <- sum(W_disagree * P_obs)
     d_e <- sum(W_disagree * P_exp)
-    if (d_e <= 0) return(if (d_o == 0) 1 else 0)
+    if (d_e <= 1e-12) return(NA_real_)
     1 - d_o / d_e
   }
 
@@ -327,14 +331,12 @@ compute_categorical_calibration <- function(pred, truth, ordinal = FALSE) {
   kappa_quad <- if (k >= 2L) calc_kappa((idx_mat / (k - 1))^2) else NA_real_
 
   # Krippendorff's alpha (2 raters: exact coincidence matrix formulation)
-  # Coincidence matrix O = cm_mat + t(cm_mat), total pairs = 2*n
   O <- cm_mat + t(cm_mat)
   n_c <- rowSums(O)
   tot_pairs <- sum(n_c) # = 2*n
   E_mat <- (outer(n_c, n_c) - diag(n_c)) / max(tot_pairs - 1, 1)
 
   if (ordinal && k >= 2L) {
-    # Ordinal distance metric (Krippendorff 2011)
     D_mat <- matrix(0, nrow = k, ncol = k)
     for (c_i in seq_len(k)) {
       for (k_i in seq_len(k)) {
@@ -352,7 +354,7 @@ compute_categorical_calibration <- function(pred, truth, ordinal = FALSE) {
 
   do_krip <- sum(O * D_mat)
   de_krip <- sum(E_mat * D_mat)
-  krip_alpha <- if (de_krip > 0) 1 - do_krip / de_krip else if (do_krip == 0) 1 else 0
+  krip_alpha <- if (de_krip > 1e-12) 1 - do_krip / de_krip else NA_real_
 
   metrics <- tibble::tibble(
     n = n,

@@ -8,7 +8,8 @@ coding_cache(type = c("memory", "disk", "none"), dir = NULL)
 }
 \arguments{
 \item{type}{Storage mode: \code{"memory"} (default, session-scoped), \code{"disk"}
-(persistent \code{.rds} files in \code{dir}), or \code{"none"} (caching disabled).}
+(persistent checksummed \code{.rds} files in \code{dir}), or \code{"none"} (caching
+disabled).}
 
 \item{dir}{Directory path for \code{"disk"} caching. Must be explicitly supplied
 when \code{type = "disk"} (created automatically if it does not exist).}
@@ -19,8 +20,9 @@ An object of class \code{"llm_coding_cache"}.
 \description{
 Creates a memory-backed, disk-backed, or disabled cache keyed by SHA-256
 hashes of \verb{(schema, unit_id, prompt, model, temperature, replicate, backend)}.
-Caching guarantees exact reproducibility and eliminates redundant API calls
-across repeated runs.
+Disk caches enforce path-safe canonical keys (blocking directory traversal),
+atomic temporary-file + rename writes, and SHA-256 payload integrity
+checksums with automatic eviction of corrupted entries.
 }
 \examples{
 mem_cache <- coding_cache("memory")

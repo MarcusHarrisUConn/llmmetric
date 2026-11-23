@@ -52,7 +52,7 @@ test_that("validate_coded_output enforces types, bounds, enums, fences, strictne
   # Non-integer in integer field
   v_nonint <- validate_coded_output('{"score": 3, "count": 2.4, "label": "low", "ok": false}', s)
   expect_false(v_nonint$valid)
-  expect_match(paste(v_nonint$errors, collapse = " "), "not an integer")
+  expect_match(paste(v_nonint$errors, collapse = " "), "not a valid finite integer")
 
   # Invalid factor level
   v_lvl <- validate_coded_output('{"score": 3, "count": 2, "label": "medium", "ok": true}', s)
