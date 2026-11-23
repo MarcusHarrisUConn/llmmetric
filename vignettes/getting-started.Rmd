@@ -1,0 +1,216 @@
+---
+title: "Treating LLMs as Measurement Instruments: Getting Started with llmmetric"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Treating LLMs as Measurement Instruments: Getting Started with llmmetric}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
+)
+```
+
+## Why Treat LLMs as Psychometric Measurement Instruments?
+
+When researchers use large language models (LLMs) to code open-ended survey responses, therapy transcripts, or daily ecological momentary assessment (EMA) diaries into quantitative scores, the resulting variables behave like ratings from fallible human judges—except with new error sources:
+
+1. **Facet variance:** scores fluctuate across prompt wordings, model families, and sampling temperatures.
+2. **Miscalibration & drift:** LLM scores may exhibit scale compression, intercept shifts, or temporal drift across API updates.
+3. **Differential Prompt Functioning (DPF):** a prompt may systematically over- or under-score specific demographic or experimental subgroups conditional on true human ratings.
+4. **Invalid downstream inference:** plugging biased or noisy LLM scores directly into regressions or multilevel models produces biased slopes and anti-conservative confidence intervals.
+
+`llmmetric` addresses all four issues in one cohesive workflow.
+
+```{r load-pkg}
+library(llmmetric)
+```
+
+---
+
+## 1. Multi-Facet Structured Coding with Caching & Schema Validation
+
+In production you plug in `backend_openai()` (any OpenAI-compatible HTTP endpoint) or `backend_ollama()` (local Ollama models). For offline reproducibility, prototyping, and power analysis, `llmmetric` provides `backend_mock()`—a deterministic synthetic LLM rater parameterized by explicit variance components, calibration bias, subgroup DPF, and drift.
+
+```{r coding-pipeline}
+# Define a strict JSON output schema
+schema <- coding_schema(
+  llm_score = schema_field("numeric", min = -6, max = 12, description = "Emotional distress rating"),
+  severity  = schema_field("factor", levels = c("low", "moderate", "high"))
+)
+
+# Specify a crossed 3 prompts x 2 models coding design
+design <- coding_design(
+  prompts = c(
+    direct = "Rate the speaker's emotional distress: {text}",
+    rubric = "Apply the clinical distress rubric to score: {text}",
+    cot    = "Identify emotional cues step by step, then score: {text}"
+  ),
+  models = c("model_a", "model_b"),
+  temperatures = 0,
+  schema = schema
+)
+
+# Sample corpus with unit-level covariates and human validation subset
+set.seed(2026)
+corpus <- tibble::tibble(
+  unit_id = paste0("u_", sprintf("%03d", 1:60)),
+  group = factor(rep(c("group_a", "group_b"), each = 30)),
+  true_score = rnorm(60, mean = 3.0, sd = 1.2),
+  text = paste("Diary reflection number", 1:60)
+)
+corpus$human_score <- ifelse(seq_len(60) <= 30, corpus$true_score, NA_real_)
+
+# Execute with content-addressed memory cache and synthetic rater
+cache <- coding_cache("memory")
+backend <- backend_mock(
+  seed = 101,
+  intercept = 0.35,
+  true_score_slope = 0.85,
+  error_sd = 0.40,
+  prompt_sd = 0.30,
+  model_sd = 0.25,
+  unit_prompt_sd = 0.30,
+  unit_model_sd = 0.25,
+  dpf_uniform = c(group_b = 0.65)
+)
+
+coded <- code_texts(
+  data = corpus,
+  text_col = "text",
+  id_col = "unit_id",
+  design = design,
+  backend = backend,
+  cache = cache
+)
+coded
+
+# Re-running against the same cache produces 100% cache hits
+coded_cached <- code_texts(
+  data = corpus,
+  text_col = "text",
+  id_col = "unit_id",
+  design = design,
+  backend = backend,
+  cache = cache
+)
+coded_cached$cache_stats
+```
+
+---
+
+## 2. Generalizability Theory: G-Study and D-Study
+
+Let's inspect the built-in `ema_coded` dataset (120 EMA diary entries nested within 30 participants, scored across 3 prompts $\times$ 2 models = 720 codings, with 50 human-validated entries).
+
+```{r g-study}
+data(ema_coded)
+
+g <- g_study(ema_coded, score_col = "llm_score", facets = c("prompt", "model"))
+g
+```
+
+```{r g-study-plot}
+autoplot(g)
+```
+
+Next, use `d_study()` to answer a core research design question: *How many prompt paraphrases and models do we need to achieve reliability $E\rho^2 \ge 0.90$ at minimum cost?*
+
+```{r d-study}
+d <- d_study(g, grid = list(prompt = 1:8, model = 1:4), target = 0.90, metric = "g")
+d
+d$asymptotes
+```
+
+```{r d-study-plot}
+autoplot(d)
+```
+
+---
+
+## 3. Calibration vs. Human Gold Standards & Drift Monitoring
+
+Collapsing multi-facet ratings to unit-level composites via `aggregate_scores()` lets us evaluate agreement, bias, dispersion, and calibration curves against human ratings:
+
+```{r calibration}
+unit_df <- aggregate_scores(ema_coded, score_col = "llm_score", id_col = "unit_id")
+
+cal <- calibration_metrics(unit_df, pred_col = "llm_score", truth_col = "human_score")
+cal
+```
+
+```{r calibration-plot}
+autoplot(cal)
+```
+
+When an API provider silently updates a model checkpoint or you score new longitudinal waves, `check_drift()` audits stability on a fixed anchor set of texts:
+
+```{r drift}
+set.seed(15)
+anchor_units <- paste0("anchor_", 1:40)
+anchor_base <- rnorm(40, mean = 3.0, sd = 1.1)
+anchor_df <- tibble::tibble(
+  unit_id = rep(anchor_units, 3),
+  version = rep(c("2026-01", "2026-04", "2026-07"), each = 40),
+  score = rep(anchor_base, 3) + rep(c(0, 0.04, 0.55), each = 40) + rnorm(120, sd = 0.25)
+)
+
+drift_res <- check_drift(anchor_df, score_col = "score", version_col = "version")
+drift_res
+autoplot(drift_res)
+```
+
+---
+
+## 4. Differential Prompt Functioning (DPF) & Fairness Diagnostics
+
+High overall correlation with human scores can still mask systematic subgroup bias. `dpf_test()` adapts nested DIF regression models to test **uniform** (parallel intercept shift) and **non-uniform** (slope difference) bias conditional on human gold-standard scores—using unit-clustered sandwich tests automatically when units appear across multiple prompts:
+
+```{r dpf}
+dpf <- dpf_test(
+  ema_coded,
+  score_col = "llm_score",
+  truth_col = "human_score",
+  group_col = "group",
+  prompt_col = "prompt",
+  id_col = "unit_id"
+)
+dpf
+```
+
+```{r dpf-plot}
+autoplot(dpf, type = "curves")
+```
+
+Notice that `dpf_test()` clearly separates the injected uniform subgroup bias (`uniform p < 0.0001`) from non-uniform slope bias (`nonuniform p > 0.20`), and flags every prompt exhibiting bias after Benjamini-Hochberg FDR control.
+
+---
+
+## 5. Error-Corrected Downstream Inference (PPI++ & Multilevel `ppi_lmer`)
+
+Because `ema_coded` exhibits both calibration distortion and uniform subgroup bias for `group_b`, plugging `llm_score` directly into `lm()` biases the estimated group difference.
+
+Using `ppi_lm()` and `ppi_lmer()`, we combine the 50 human-validated entries with the 70 unlabeled LLM-coded entries to obtain **provably unbiased estimates, valid 95% confidence intervals, and narrower standard errors than using the 50 human ratings alone**:
+
+```{r ppi}
+fit_lm <- ppi_lm(human_score ~ x + group, data = unit_df, pred_col = "llm_score")
+summary(fit_lm)
+```
+
+```{r ppi-plot}
+autoplot(fit_lm, true_values = c(x = 1.1, groupgroup_b = 0.5))
+```
+
+Because EMA diary entries are nested within 30 participants (`cluster`), `ppi_lmer()` incorporates random-intercept variance components and cluster-robust PPI++ sandwich standard errors:
+
+```{r ppi-lmer}
+fit_ml <- ppi_lmer(human_score ~ x + group + (1 | cluster), data = unit_df, pred_col = "llm_score")
+fit_ml
+```
+
+See `vignette("ppi-coverage-proof", package = "llmmetric")` for a formal Monte Carlo proof comparing empirical 95% confidence interval coverage across Naive LLM, Human-Only, PPI, and PPI++ estimators.

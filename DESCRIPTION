@@ -1,0 +1,46 @@
+Package: llmmetric
+Title: Psychometric Validation and Inference for LLM-Coded Data
+Version: 0.1.0
+Authors@R: 
+    person(
+      given = "Marcus",
+      family = "Harris",
+      role = c("aut", "cre", "cph"),
+      email = "marcus.harris.uconn@gmail.com"
+    )
+Description: Treats large language models (LLMs) as fallible measurement
+    instruments for research data. Orchestrates reproducible multi-facet
+    coding designs with response caching, strict JSON schema validation, and
+    pluggable API or deterministic mock backends; estimates Generalizability
+    Theory variance components, reliability, D-study projections, calibration
+    against human gold standards, temporal drift, and Differential Prompt
+    Functioning (DPF); and implements Prediction-Powered Inference (PPI,
+    PPI++, and clustered or multilevel extensions) for statistically valid
+    downstream estimation and inference.
+License: MIT + file LICENSE
+URL: https://github.com/MarcusHarrisUConn/llmmetric
+BugReports: https://github.com/MarcusHarrisUConn/llmmetric/issues
+Depends: 
+    R (>= 4.1.0)
+Imports: 
+    cli,
+    digest,
+    ggplot2,
+    httr2,
+    jsonlite,
+    lme4,
+    rlang,
+    stats,
+    tibble,
+    utils
+Suggests: 
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    withr
+VignetteBuilder: knitr
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0
