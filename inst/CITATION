@@ -1,0 +1,8 @@
+bibentry(
+  bibtype = "Manual",
+  title = "llmmetric: Psychometric Validation and Inference for LLM-Coded Data",
+  author = person(given = "Marcus", family = "Harris"),
+  year = "2026",
+  note = "R package version 0.3.0",
+  url = "https://github.com/MarcusHarrisUConn/llmmetric"
+)

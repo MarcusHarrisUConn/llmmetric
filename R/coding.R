@@ -85,8 +85,9 @@ coding_design <- function(prompts,
 #'
 #' Orchestrates crossed LLM scoring across `units x prompts x models x
 #' temperatures x replicates` with content-addressed caching, strict JSON
-#' schema validation, retry handling on malformed/invalid outputs, and pluggable
-#' backends.
+#' schema validation, retry handling on malformed/invalid outputs, resumable
+#' atomic checkpointing (`checkpoint_file`), partial-failure recovery
+#' (`on_error`), and pluggable backends.
 #'
 #' @param data A `data.frame` containing the texts to score and any optional
 #'   unit-level metadata (e.g., `human_score`, `group`, `wave`, `cluster`, or
@@ -108,6 +109,18 @@ coding_design <- function(prompts,
 #'   `FALSE` keeps none; a character vector preserves only those columns.
 #' @param keep_raw Logical; if `TRUE`, retains raw JSON text in a `raw_output`
 #'   column. Default `FALSE`.
+#' @param checkpoint_file Optional path to an `.rds` checkpoint file for
+#'   resumable batch coding. Completed valid cells are persisted atomically
+#'   every `checkpoint_every` new cells and immediately upon failure or
+#'   completion; re-running with the same `checkpoint_file` automatically
+#'   resumes without re-scoring completed cells.
+#' @param checkpoint_every Positive integer specifying how often (in newly
+#'   completed cells) to flush `checkpoint_file`. Default `25L`.
+#' @param on_error Failure handling policy after all retries for a cell are
+#'   exhausted: `"warn_na"` (default: records `NA` for failed cells, populates
+#'   `$failures` and `$failed_indices`, and emits a concise summary warning) or
+#'   `"stop"` (flushes `checkpoint_file` first so completed cells are never
+#'   lost, then aborts with an actionable error).
 #'
 #' @return An S3 object of class `"llm_coded_data"` with components:
 #'   - `scores`: a [tibble::tibble()] with one row per `(unit, prompt, model,
@@ -117,6 +130,12 @@ coding_design <- function(prompts,
 #'   - `schema`: the active [coding_schema()].
 #'   - `cache_stats`: snapshot of [cache_stats()] after execution.
 #'   - `failures`: tibble of cells that failed validation after all retries.
+#'   - `failed_indices`: integer vector of input row indices with at least one
+#'     failed cell.
+#'   - `failed_units`: character vector of unit IDs with at least one failed
+#'     cell.
+#'   - `resumed_count`: integer count of cells restored from `checkpoint_file`.
+#'   - `checkpoint_file`: checkpoint path (or `NULL`).
 #' @export
 #'
 #' @examples
@@ -141,7 +160,10 @@ code_texts <- function(data,
                        max_validation_retries = 2L,
                        coerce = FALSE,
                        keep_cols = TRUE,
-                       keep_raw = FALSE) {
+                       keep_raw = FALSE,
+                       checkpoint_file = NULL,
+                       checkpoint_every = 25L,
+                       on_error = c("warn_na", "stop")) {
   df <- extract_data_frame(data, arg = "data")
   assert_scalar_character(text_col, "text_col")
   assert_columns(df, text_col, arg = "data")
@@ -156,6 +178,67 @@ code_texts <- function(data,
   max_validation_retries <- as.integer(round(max_validation_retries))
   assert_flag(coerce, "coerce")
   assert_flag(keep_raw, "keep_raw")
+  assert_scalar_character(checkpoint_file, "checkpoint_file", allow_null = TRUE)
+  assert_scalar_numeric(checkpoint_every, "checkpoint_every", min = 1)
+  checkpoint_every <- as.integer(round(checkpoint_every))
+  on_error <- match.arg(on_error)
+
+  if (!is.null(checkpoint_file)) {
+    if (grepl("[[:cntrl:]]", checkpoint_file)) {
+      cli::cli_abort("{.arg checkpoint_file} must not contain control characters.")
+    }
+    ckpt_dir <- dirname(checkpoint_file)
+    if (!dir.exists(ckpt_dir)) {
+      dir.create(ckpt_dir, recursive = TRUE, showWarnings = FALSE)
+    }
+  }
+
+  # Atomic checkpoint persistence helper
+  save_checkpoint_atomic <- function(ckpt_map, path) {
+    if (is.null(path)) return(invisible(FALSE))
+    env_payload <- list(
+      llmmetric_checkpoint_v = 1L,
+      schema_hash = design$schema$hash,
+      checksum = digest::digest(ckpt_map, algo = "sha256"),
+      entries = ckpt_map
+    )
+    tmp_suffix <- substr(
+      digest::digest(list(Sys.getpid(), length(ckpt_map), proc.time()[["elapsed"]]), algo = "sha256"),
+      1L, 10L
+    )
+    tmp_path <- file.path(dirname(path), paste0(".", basename(path), "_", tmp_suffix, ".tmp"))
+    on.exit(if (file.exists(tmp_path)) unlink(tmp_path), add = TRUE)
+    saveRDS(env_payload, file = tmp_path)
+    ok <- file.rename(tmp_path, path)
+    if (!isTRUE(ok)) {
+      ok <- file.copy(tmp_path, path, overwrite = TRUE)
+      unlink(tmp_path)
+    }
+    invisible(isTRUE(ok))
+  }
+
+  load_checkpoint_safe <- function(path, expected_schema_hash) {
+    if (is.null(path) || !file.exists(path)) {
+      return(list())
+    }
+    obj <- tryCatch(readRDS(path), error = function(e) NULL)
+    valid_ck <- is.list(obj) &&
+      identical(obj$llmmetric_checkpoint_v, 1L) &&
+      identical(obj$schema_hash, expected_schema_hash) &&
+      is.list(obj$entries) &&
+      identical(digest::digest(obj$entries, algo = "sha256"), obj$checksum)
+    if (!valid_ck) {
+      cli::cli_warn(
+        "Ignoring incompatible or corrupted checkpoint file {.path {path}} and starting fresh."
+      )
+      return(list())
+    }
+    obj$entries
+  }
+
+  ckpt_entries <- load_checkpoint_safe(checkpoint_file, design$schema$hash)
+  ckpt_dirty_count <- 0L
+  resumed_count <- 0L
 
   # Resolve unit IDs
   if (is.null(id_col)) {
@@ -263,6 +346,23 @@ code_texts <- function(data,
       backend_id = b$id
     )
 
+    # 1. Resume from checkpoint_file if present
+    if (!is.null(ckpt_entries[[ckey]])) {
+      ck_val <- ckpt_entries[[ckey]]
+      resumed_count <- resumed_count + 1L
+      cache_hit_vec[row_i] <- TRUE
+      attempts_vec[row_i] <- 0L
+      valid_vec[row_i] <- TRUE
+      for (fnm in field_names) {
+        field_cols[[fnm]][row_i] <- ck_val$data[[fnm]]
+      }
+      if (isTRUE(keep_raw)) {
+        raw_vec[row_i] <- ck_val$raw %||% NA_character_
+      }
+      next
+    }
+
+    # 2. Check coding cache
     cached <- cache_get(cache, ckey)
     if (!is.null(cached)) {
       cache_hit_vec[row_i] <- TRUE
@@ -274,10 +374,13 @@ code_texts <- function(data,
       if (isTRUE(keep_raw)) {
         raw_vec[row_i] <- cached$raw %||% NA_character_
       }
+      if (!is.null(checkpoint_file)) {
+        ckpt_entries[[ckey]] <- cached
+      }
       next
     }
 
-    # Cache miss: invoke backend with validation retries
+    # 3. Cache miss: invoke backend with validation retries
     prev_errors <- character()
     succeeded <- FALSE
     last_raw <- NA_character_
@@ -323,7 +426,16 @@ code_texts <- function(data,
         for (fnm in field_names) {
           field_cols[[fnm]][row_i] <- val$data[[fnm]]
         }
-        cache_set(cache, ckey, list(data = val$data, raw = last_raw))
+        entry_val <- list(data = val$data, raw = last_raw)
+        cache_set(cache, ckey, entry_val)
+        if (!is.null(checkpoint_file)) {
+          ckpt_entries[[ckey]] <- entry_val
+          ckpt_dirty_count <- ckpt_dirty_count + 1L
+          if (ckpt_dirty_count >= checkpoint_every) {
+            save_checkpoint_atomic(ckpt_entries, checkpoint_file)
+            ckpt_dirty_count <- 0L
+          }
+        }
         break
       } else {
         prev_errors <- val$errors
@@ -338,16 +450,36 @@ code_texts <- function(data,
     }
 
     if (!succeeded) {
+      err_msg <- paste(prev_errors, collapse = "; ")
+      if (identical(on_error, "stop")) {
+        if (!is.null(checkpoint_file) && length(ckpt_entries) > 0L) {
+          save_checkpoint_atomic(ckpt_entries, checkpoint_file)
+        }
+        ckpt_hint <- if (!is.null(checkpoint_file)) {
+          paste0(" Saved ", length(ckpt_entries), " completed cell(s) to checkpoint '", checkpoint_file, "' for resumable retry.")
+        } else {
+          ""
+        }
+        cli::cli_abort(
+          "Coding failed at unit index {u_idx} (unit_id = {.val {uid}}, prompt = {.val {pid}}, model = {.val {mid}}) after {used_attempts} attempt(s): {err_msg}.{ckpt_hint}"
+        )
+      }
       failure_rows[[length(failure_rows) + 1L]] <- tibble::tibble(
+        unit_idx = u_idx,
         unit_id = uid,
         prompt = pid,
         model = mid,
         temperature = temp,
         replicate = rep_i,
         attempts = used_attempts,
-        error = paste(prev_errors, collapse = "; ")
+        error = err_msg
       )
     }
+  }
+
+  # Final flush of checkpoint file if dirty
+  if (!is.null(checkpoint_file) && (ckpt_dirty_count > 0L || !file.exists(checkpoint_file))) {
+    save_checkpoint_atomic(ckpt_entries, checkpoint_file)
   }
 
   scores_list <- list(
@@ -375,6 +507,7 @@ code_texts <- function(data,
     do.call(rbind, failure_rows)
   } else {
     tibble::tibble(
+      unit_idx = integer(),
       unit_id = character(),
       prompt = character(),
       model = character(),
@@ -385,6 +518,15 @@ code_texts <- function(data,
     )
   }
 
+  failed_indices <- sort(unique(failures_tbl$unit_idx))
+  failed_units <- unique(failures_tbl$unit_id)
+
+  if (nrow(failures_tbl) > 0L && identical(on_error, "warn_na")) {
+    cli::cli_warn(
+      "{nrow(failures_tbl)} coding cell{?s} failed across {length(failed_units)} unit{?s} (indices: {.val {utils::head(failed_indices, 10L)}}); inspect {.field $failures} and {.field $failed_indices}."
+    )
+  }
+
   structure(
     list(
       scores = scores_tbl,
@@ -392,6 +534,10 @@ code_texts <- function(data,
       schema = schema,
       cache_stats = cache_stats(cache),
       failures = failures_tbl,
+      failed_indices = failed_indices,
+      failed_units = failed_units,
+      resumed_count = resumed_count,
+      checkpoint_file = checkpoint_file,
       n_units = nrow(df),
       id_col = "unit_id",
       primary_score = field_names[1L]

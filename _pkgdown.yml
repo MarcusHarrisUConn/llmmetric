@@ -1,0 +1,108 @@
+url: https://marcusharrisphd.com/llmmetric/
+
+template:
+  bootstrap: 5
+  bootswatch: flatly
+  bslib:
+    primary: "#264653"
+    secondary: "#6e7f8d"
+    base_font:
+      google: "Source Sans Pro"
+    heading_font:
+      google: "Source Serif 4"
+    code_font:
+      google: "JetBrains Mono"
+
+navbar:
+  structure:
+    left: [intro, reference, articles, pdfs, news]
+    right: [search, github]
+  components:
+    intro:
+      text: Get started
+      href: articles/getting-started.html
+    pdfs:
+      text: PDFs
+      menu:
+        - text: Reference Manual (PDF)
+          href: llmmetric-manual.pdf
+        - text: Psychometric AI & PPI Methods Guide (PDF)
+          href: llmmetric-guide.pdf
+
+reference:
+  - title: Multi-Facet Structured Coding Engine
+    desc: Schemas, crossed experimental coding designs, resumable checkpointing, integrity-checked caches, and pluggable backends.
+    contents:
+      - schema_field
+      - coding_schema
+      - as_json_schema
+      - validate_coded_output
+      - coding_cache
+      - cache_key
+      - cache_operations
+      - coding_design
+      - code_texts
+      - aggregate_scores
+      - backend_score
+      - backend_mock
+      - backend_openai
+      - backend_ollama
+
+  - title: LLM Psychometrics & Generalizability
+    desc: Generalizability Theory variance decomposition, Decision Studies, calibration against human gold standards, human ceilings, and drift monitoring.
+    contents:
+      - g_study
+      - d_study
+      - calibration_metrics
+      - human_irr
+      - check_drift
+
+  - title: Differential Prompt Functioning & Fairness
+    desc: Uniform and non-uniform subgroup measurement invariance testing and prompt-level FDR screening.
+    contents:
+      - dpf_test
+
+  - title: Prediction-Powered Inference & Multilevel Extensions
+    desc: Error-corrected estimators combining human validation subsets with large LLM-coded corpora.
+    contents:
+      - ppi_mean
+      - ppi_proportion
+      - ppi_lm
+      - ppi_glm
+      - ppi_clustered
+      - ppi_lmer
+
+  - title: Study Planning & APA Reporting
+    desc: Validation sample-size planning, power curves, and publication-ready APA 7th-edition tables.
+    contents:
+      - ppi_sample_size
+      - ppi_power
+      - format_apa_table
+
+  - title: Diagnostic Visualizations
+    desc: Publication-ready ggplot2 autoplot() methods for all diagnostic and inference objects.
+    contents:
+      - autoplot.llm_g_study
+      - autoplot.llm_d_study
+      - autoplot.llm_calibration
+      - autoplot.llm_human_irr
+      - autoplot.llm_drift
+      - autoplot.llm_dpf
+      - autoplot.llm_ppi
+      - autoplot.llm_ppi_power
+      - reexports
+
+  - title: Datasets & Simulation
+    desc: Built-in multi-facet EMA coding study dataset and synthetic study simulator.
+    contents:
+      - ema_coded
+      - simulate_coding_study
+
+articles:
+  - title: Guides & Methodological Proofs
+    navbar: Articles
+    contents:
+      - getting-started
+      - ppi-coverage-proof
+      - dpf-and-fairness
+      - designing-validation-studies

@@ -1,3 +1,19 @@
+# llmmetric 0.3.0
+
+## New Features & Workflow Hardening
+- **Categorical & Multi-Class Prevalence PPI (`ppi_proportion()`):** Estimates population class prevalences with per-category optimal PPI++ weights, full joint $K \times K$ covariance matrices, marginal or Bonferroni-adjusted simultaneous confidence intervals, and support for discrete labels, binary probabilities, or multi-class predicted-probability columns.
+- **Human Inter-Rater Reliability Ceiling (`human_irr()` + `autoplot.llm_human_irr()`):** Computes human-vs-human reliability across two or more annotators in wide or long format—continuous $\mathrm{ICC}(A,1)$, $\mathrm{ICC}(A,k)$, $\mathrm{ICC}(C,1)$, $\mathrm{ICC}(C,k)$ (with automatic REML handling for unbalanced ratings), pairwise $r/\rho$/RMSE, plus categorical/ordinal percent agreement, Cohen's $\kappa$, Fleiss's $\kappa$ (with analytic SE/CI), and multi-rater Krippendorff's $\alpha$—and benchmarks LLM calibration directly against the human ceiling.
+- **Resumable Checkpointed Batch Coding (`code_texts()`):** Added atomic `checkpoint_file` persistence (`checkpoint_every`) and `on_error = c("warn_na", "stop")` partial-failure recovery reporting `$failed_indices`, `$failed_units`, and `$resumed_count`, ensuring mid-batch API rate limits or timeouts never discard completed cells.
+- **Publication-Ready APA Tables (`format_apa_table()`):** Formats Markdown, tibble, and LaTeX `booktabs` APA 7th-edition comparison tables contrasting Naive LLM, Human-Only, and PPI / PPI++ estimates, SEs, 95% CIs, APA-formatted p-values, and variance-reduction gains (plus support for `g_study()`, `dpf_test()`, and `human_irr()`).
+- **Complex Formula & Factor-Level Alignment:** Hardened `build_ppi_model_matrices()` for interaction formulas (`y ~ x1 * x2 + factor(group) + I(x1^2)`), automatic factor/character alignment across labeled and unlabeled splits, clear warnings when unlabeled data contain unseen factor levels, and actionable errors on single-level constant factor predictors.
+
+## Documentation, Vignettes & CRAN Readiness
+- Expanded to 4 executable vignettes: `getting-started`, `ppi-coverage-proof`, `dpf-and-fairness`, and `designing-validation-studies`.
+- Added `inst/CITATION`, runnable `inst/examples/ema_psychometric_workflow.R`, `inst/guides/llmmetric-guide.Rmd`, `inst/WORDLIST`, `cran-comments.md`, `_pkgdown.yml`, and GitHub Actions workflows (`.github/workflows/R-CMD-check.yaml`, `.github/workflows/pkgdown.yaml`).
+- Verified 0 misspellings via `spelling::spell_check_package()` and `0 errors | 0 warnings | 0 notes` under full `R CMD check` (including PDF manual) and `--as-cran`.
+
+---
+
 # llmmetric 0.2.0
 
 ## Security Hardening

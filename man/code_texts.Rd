@@ -14,7 +14,10 @@ code_texts(
   max_validation_retries = 2L,
   coerce = FALSE,
   keep_cols = TRUE,
-  keep_raw = FALSE
+  keep_raw = FALSE,
+  checkpoint_file = NULL,
+  checkpoint_every = 25L,
+  on_error = c("warn_na", "stop")
 )
 }
 \arguments{
@@ -47,6 +50,21 @@ all non-text columns that do not collide with facet or schema names;
 
 \item{keep_raw}{Logical; if \code{TRUE}, retains raw JSON text in a \code{raw_output}
 column. Default \code{FALSE}.}
+
+\item{checkpoint_file}{Optional path to an \code{.rds} checkpoint file for
+resumable batch coding. Completed valid cells are persisted atomically
+every \code{checkpoint_every} new cells and immediately upon failure or
+completion; re-running with the same \code{checkpoint_file} automatically
+resumes without re-scoring completed cells.}
+
+\item{checkpoint_every}{Positive integer specifying how often (in newly
+completed cells) to flush \code{checkpoint_file}. Default \code{25L}.}
+
+\item{on_error}{Failure handling policy after all retries for a cell are
+exhausted: \code{"warn_na"} (default: records \code{NA} for failed cells, populates
+\verb{$failures} and \verb{$failed_indices}, and emits a concise summary warning) or
+\code{"stop"} (flushes \code{checkpoint_file} first so completed cells are never
+lost, then aborts with an actionable error).}
 }
 \value{
 An S3 object of class \code{"llm_coded_data"} with components:
@@ -57,12 +75,19 @@ An S3 object of class \code{"llm_coded_data"} with components:
 \item \code{schema}: the active \code{\link[=coding_schema]{coding_schema()}}.
 \item \code{cache_stats}: snapshot of \code{\link[=cache_stats]{cache_stats()}} after execution.
 \item \code{failures}: tibble of cells that failed validation after all retries.
+\item \code{failed_indices}: integer vector of input row indices with at least one
+failed cell.
+\item \code{failed_units}: character vector of unit IDs with at least one failed
+cell.
+\item \code{resumed_count}: integer count of cells restored from \code{checkpoint_file}.
+\item \code{checkpoint_file}: checkpoint path (or \code{NULL}).
 }
 }
 \description{
 Orchestrates crossed LLM scoring across \verb{units x prompts x models x temperatures x replicates} with content-addressed caching, strict JSON
-schema validation, retry handling on malformed/invalid outputs, and pluggable
-backends.
+schema validation, retry handling on malformed/invalid outputs, resumable
+atomic checkpointing (\code{checkpoint_file}), partial-failure recovery
+(\code{on_error}), and pluggable backends.
 }
 \examples{
 texts <- tibble::tibble(

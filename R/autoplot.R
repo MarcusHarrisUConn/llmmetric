@@ -713,3 +713,93 @@ autoplot.llm_ppi_power <- function(object, metric = c("auto", "power", "se"), ..
 
   p
 }
+
+#' Plot Human Inter-Rater Reliability Ceiling vs. LLM Calibration
+#'
+#' Visualizes human-vs-human inter-rater reliability metrics, and when an
+#' `llm_calibration` benchmark was supplied to [human_irr()], plots side-by-side
+#' bars comparing LLM-human agreement directly against the human inter-rater
+#' ceiling.
+#'
+#' @param object An `"llm_human_irr"` object returned by [human_irr()].
+#' @param ... Unused; included for S3 consistency.
+#'
+#' @return A `ggplot2::ggplot` object.
+#' @export
+#'
+#' @examples
+#' set.seed(10)
+#' z <- rnorm(50, mean = 4, sd = 1.2)
+#' df <- tibble::tibble(
+#'   h1 = z + rnorm(50, sd = 0.4),
+#'   h2 = z + rnorm(50, sd = 0.45),
+#'   llm = 0.1 + 0.9 * z + rnorm(50, sd = 0.5)
+#' )
+#' cal <- calibration_metrics(df, pred_col = "llm", truth_col = "h1")
+#' irr <- human_irr(df, rater_cols = c("h1", "h2"), llm_calibration = cal)
+#' autoplot(irr)
+autoplot.llm_human_irr <- function(object, ...) {
+  pal <- llmmetric_colors()
+
+  if (!is.null(object$benchmark)) {
+    bm <- object$benchmark
+    df_h <- tibble::tibble(metric = bm$metric, value = bm$human_ceiling, source = "Human Inter-Rater Ceiling")
+    df_l <- tibble::tibble(metric = bm$metric, value = bm$llm_vs_human, source = "LLM vs. Human")
+    plot_df <- rbind(df_h, df_l)
+    plot_df$metric_f <- factor(plot_df$metric, levels = rev(bm$metric))
+    plot_df$source_f <- factor(plot_df$source, levels = c("Human Inter-Rater Ceiling", "LLM vs. Human"))
+
+    return(
+      ggplot2::ggplot(
+        plot_df,
+        ggplot2::aes(x = .data$value, y = .data$metric_f, fill = .data$source_f)
+      ) +
+        ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.68), width = 0.60, alpha = 0.92) +
+        ggplot2::scale_fill_manual(
+          values = c(
+            "Human Inter-Rater Ceiling" = unname(pal["blue"]),
+            "LLM vs. Human" = unname(pal["teal"])
+          )
+        ) +
+        ggplot2::scale_x_continuous(limits = c(0, 1.05)) +
+        ggplot2::labs(
+          title = "LLM Calibration vs. Human Inter-Rater Reliability Ceiling",
+          subtitle = paste0(
+            "Units = ", object$n_units, " | Human raters = ", object$n_raters, " | Scale = ", object$type
+          ),
+          x = "Reliability / Agreement Coefficient",
+          y = NULL,
+          fill = NULL
+        ) +
+        theme_llmmetric()
+    )
+  }
+
+  m <- object$metrics
+  if (object$type == "continuous") {
+    plot_df <- tibble::tibble(
+      metric = c("ICC(A,1)", "ICC(A,k)", "ICC(C,1)", "ICC(C,k)", "Mean Pearson r", "Mean Spearman rho"),
+      value = c(m$icc_a1, m$icc_ak, m$icc_c1, m$icc_ck, m$mean_pearson_r, m$mean_spearman_rho)
+    )
+  } else {
+    plot_df <- tibble::tibble(
+      metric = c("Percent Agreement", "Fleiss's kappa", "Krippendorff's alpha"),
+      value = c(m$pct_agreement, m$fleiss_kappa, m$krippendorff_alpha)
+    )
+  }
+  plot_df <- plot_df[!is.na(plot_df$value), , drop = FALSE]
+  plot_df$metric_f <- factor(plot_df$metric, levels = rev(plot_df$metric))
+
+  ggplot2::ggplot(plot_df, ggplot2::aes(x = .data$value, y = .data$metric_f)) +
+    ggplot2::geom_col(width = 0.62, fill = unname(pal["blue"]), alpha = 0.9) +
+    ggplot2::scale_x_continuous(limits = c(0, 1.05)) +
+    ggplot2::labs(
+      title = "Human Inter-Rater Reliability Ceiling",
+      subtitle = paste0(
+        "Units = ", object$n_units, " | Human raters = ", object$n_raters, " | Method = ", object$method_used
+      ),
+      x = "Reliability Coefficient",
+      y = NULL
+    ) +
+    theme_llmmetric()
+}

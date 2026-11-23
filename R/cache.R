@@ -80,6 +80,14 @@ cache_key <- function(...) {
 #'   `writes`, `evictions`, and `entries`.
 #' @name cache_operations
 #' @export
+#'
+#' @examples
+#' mc <- coding_cache("memory")
+#' k <- cache_key("u1", "p1", "m1")
+#' cache_set(mc, k, list(score = 4.5))
+#' cache_get(mc, k)
+#' cache_stats(mc)
+#' cache_clear(mc)
 cache_get <- function(cache, key) {
   if (!inherits(cache, "llm_coding_cache")) {
     cli::cli_abort("{.arg cache} must be an {.cls llm_coding_cache} object.")

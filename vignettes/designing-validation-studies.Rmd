@@ -1,0 +1,191 @@
+---
+title: "Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
+)
+```
+
+## Planning an LLM-Assisted Research Study From Start to Finish
+
+A rigorous LLM measurement study requires answering four quantitative design questions *before* spending API budget or human annotator hours:
+
+1. **Instrument reliability (`g_study()` & `d_study()`):** How many prompt paraphrases and models should we average per text to hit reliability $G \ge 0.90$ at minimum cost?
+2. **Human validation sample size (`ppi_sample_size()` & `ppi_power()`):** Given a corpus of $M = 2{,}000$ texts and pilot LLM-human correlation $r$, how many texts must humans double-code to reach target precision or 80% statistical power?
+3. **Categorical prevalence estimation (`ppi_proportion()`):** When coding discrete survey themes or clinical categories, how do we obtain valid marginal and simultaneous confidence intervals for class prevalences?
+4. **Resumable execution & reporting (`code_texts()` + `format_apa_table()`):** How do we protect large batch runs against mid-run API failures and export clean APA 7th-edition tables?
+
+```{r libs}
+library(llmmetric)
+```
+
+---
+
+## 1. Cost-Aware D-Study Optimization
+
+Using the built-in `ema_coded` pilot dataset (120 diary entries crossed with 3 prompts $\times$ 2 models), we estimate variance components via REML and optimize the facet design under unequal costs (suppose running an extra model costs $3\times$ as much as running an extra prompt paraphrase):
+
+```{r gd-study}
+data(ema_coded)
+
+g <- g_study(ema_coded, score_col = "llm_score", facets = c("prompt", "model"))
+format_apa_table(g)
+
+d_cost <- d_study(
+  g,
+  grid = list(prompt = 1:8, model = 1:4),
+  target = 0.90,
+  metric = "g",
+  costs = c(prompt = 1, model = 3)
+)
+d_cost
+```
+
+```{r gd-plot}
+autoplot(d_cost)
+```
+
+The D-study identifies the Pareto-minimal, lowest-cost combination hitting $G \ge 0.90$ and reveals via `d_cost$asymptotes` whether adding more prompts alone eventually plateaus due to `unit:model` interaction variance.
+
+---
+
+## 2. Sizing the Human Validation Subset (`ppi_sample_size()` & `ppi_power()`)
+
+Once the pilot validation subset is coded, `ppi_sample_size()` computes the exact number of human annotations needed for either a target standard error (`target_se`) or target two-sided statistical power (`effect` + `power`), accounting for the finite corpus floor $\sigma / \sqrt{n_{\text{total}}}$:
+
+```{r sample-size}
+agg <- aggregate_scores(ema_coded, score_col = "llm_score")
+pilot_fit <- ppi_lm(human_score ~ x + group, data = agg, pred_col = "llm_score")
+
+# Plan a full study of 2,000 EMA entries targeting SE <= 0.06 on predictor x
+plan_se <- ppi_sample_size(
+  target_se = 0.06,
+  n_total = 2000,
+  pilot = pilot_fit,
+  term = "x"
+)
+plan_se
+
+# Plan for 80% power to detect effect = 0.25 with sd = 1.2 and LLM correlation r = 0.82
+plan_pow <- ppi_sample_size(
+  effect = 0.25,
+  power = 0.80,
+  sd = 1.2,
+  r = 0.82,
+  n_total = 2000
+)
+plan_pow
+```
+
+We can also visualize how statistical power scales across human validation sizes $n_{\text{labeled}}$ and LLM-human correlations $r$ relative to human-only estimation:
+
+```{r power-curves}
+pw <- ppi_power(
+  n_labeled = seq(40, 240, by = 40),
+  n_total = 2000,
+  effect = 0.25,
+  sd = 1.2,
+  r = c(0.60, 0.80, 0.90)
+)
+pw
+autoplot(pw, metric = "power")
+```
+
+---
+
+## 3. Categorical Prevalence Estimation (`ppi_proportion()`)
+
+Many text-coding workflows estimate population **category prevalences** (e.g., percentage of clinical notes showing `"none"`, `"moderate"`, or `"severe"` symptoms). Even modest classifier confusion dramatically biases Naive LLM proportions. `ppi_proportion()` estimates class prevalences with optimal per-category power-tuning $\hat{\lambda}_c^*$ and optional Bonferroni-adjusted simultaneous confidence intervals (`simultaneous = TRUE`):
+
+```{r ppi-proportion}
+set.seed(2030)
+lvls <- c("none", "moderate", "severe")
+true_probs <- c(none = 0.55, moderate = 0.30, severe = 0.15)
+n_tot <- 1000L
+
+y_true <- factor(sample(lvls, n_tot, replace = TRUE, prob = true_probs), levels = lvls)
+# LLM systematically over-classifies "moderate" cases as "severe"
+y_llm <- y_true
+flip <- (y_true == "moderate") & (runif(n_tot) < 0.45)
+y_llm[flip] <- "severe"
+
+prop_df <- tibble::tibble(
+  human_cat = factor(c(as.character(y_true[1:150]), rep(NA_character_, n_tot - 150L)), levels = lvls),
+  llm_cat = y_llm
+)
+
+fit_prop <- ppi_proportion(prop_df, truth_col = "human_cat", pred_col = "llm_cat")
+fit_prop_sim <- ppi_proportion(prop_df, truth_col = "human_cat", pred_col = "llm_cat", simultaneous = TRUE)
+
+format_apa_table(fit_prop)
+```
+
+```{r ppi-proportion-plot}
+autoplot(fit_prop, true_values = true_probs)
+```
+
+Naive LLM inflates `"severe"` prevalence from the true `0.15` to nearly `0.29`, whereas PPI++ recovers all three prevalences accurately with substantially tighter CIs than Human-Only.
+
+---
+
+## 4. Resumable Checkpointed Batch Coding
+
+For large-scale API runs, supply both a disk `coding_cache("disk", dir = ...)` and a `checkpoint_file` in `code_texts()`. Completed cells are atomically checkpointed so transient rate limits never waste already-paid API calls:
+
+```{r checkpoint-demo}
+tmp_dir <- tempfile("llmmetric_ckpt_")
+dir.create(tmp_dir)
+ckpt_file <- file.path(tmp_dir, "run_checkpoint.rds")
+
+mini_corpus <- tibble::tibble(
+  id = paste0("doc_", 1:10),
+  text = paste("Open-ended survey response", 1:10),
+  true_score = seq(-1, 1, length.out = 10)
+)
+des <- coding_design(
+  prompts = c(p1 = "Score: {text}"),
+  models = "mock_m1",
+  schema = coding_schema(score = schema_field("numeric"))
+)
+
+run1 <- code_texts(
+  mini_corpus, text_col = "text", id_col = "id",
+  design = des, backend = backend_mock(seed = 7),
+  cache = coding_cache("none"),
+  checkpoint_file = ckpt_file,
+  checkpoint_every = 5L
+)
+
+# Re-running against the same checkpoint restores all 10 completed cells immediately
+run2 <- code_texts(
+  mini_corpus, text_col = "text", id_col = "id",
+  design = des, backend = backend_mock(seed = 7),
+  cache = coding_cache("none"),
+  checkpoint_file = ckpt_file
+)
+c(resumed_cells = run2$resumed_count, total_cells = nrow(run2$scores))
+
+# Clean up temporary directory
+unlink(tmp_dir, recursive = TRUE)
+```
+
+---
+
+## 5. Publication-Ready APA Reporting Tables
+
+`format_apa_table()` exports Markdown, tibble, or LaTeX `booktabs` tables formatted to APA 7th-edition conventions (no leading zero on $p$-values, `< .001`, bracketed 95% CIs, and effective sample-size gain):
+
+```{r apa-report}
+fit_ml <- ppi_lmer(human_score ~ x + group + (1 | cluster), data = agg, pred_col = "llm_score")
+format_apa_table(fit_ml, format = "markdown", include_intercept = FALSE)
+```

@@ -7,8 +7,7 @@
 backend_ollama(
   model = "llama3.2",
   base_url = "http://localhost:11434",
-  system_prompt =
-    "You are a precise research coder. Return only valid JSON matching the requested schema.",
+  system_prompt = "Return only valid JSON matching the coding schema.",
   format = c("schema", "json", "none"),
   timeout = 120,
   max_retries = 2L,

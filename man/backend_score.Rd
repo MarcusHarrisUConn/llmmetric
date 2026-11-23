@@ -23,3 +23,14 @@ and optional metadata (\code{model}, \code{latency_ms}, \code{raw_response}).
 S3 generic invoked by \code{\link[=code_texts]{code_texts()}} to obtain a raw JSON string or
 structured response from an \code{llm_backend} object.
 }
+\examples{
+b <- backend_mock(seed = 1)
+s <- coding_schema(score = schema_field("numeric"))
+req <- list(
+  unit_id = "u1", text = "Example text", prompt_id = "p1",
+  prompt_text = "Rate: Example text", model = "m1",
+  temperature = 0, replicate = 1L, schema = s, attempt = 1L,
+  meta = list(true_score = 2.0)
+)
+backend_score(b, req)$content
+}

@@ -1,6 +1,6 @@
 Package: llmmetric
 Title: Psychometric Validation and Inference for LLM-Coded Data
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: 
     person(
       given = "Marcus",
@@ -8,17 +8,22 @@ Authors@R:
       role = c("aut", "cre", "cph"),
       email = "marcus.harris.uconn@gmail.com"
     )
-Description: Treats large language models (LLMs) as fallible measurement
-    instruments for research data. Orchestrates reproducible multi-facet
-    coding designs with response caching, strict JSON schema validation, and
-    pluggable API or deterministic mock backends; estimates Generalizability
-    Theory variance components, reliability, D-study projections, calibration
-    against human gold standards, temporal drift, and Differential Prompt
-    Functioning (DPF); and implements Prediction-Powered Inference (PPI,
-    PPI++, and clustered or multilevel extensions) for statistically valid
-    downstream estimation and inference.
+Description: Treats large language models (LLMs) explicitly as fallible
+    measurement instruments for quantitative research data. Orchestrates
+    reproducible multi-facet coding designs with resumable checkpointing,
+    integrity-checked disk caching, strict JSON schema validation, and
+    pluggable 'OpenAI'-compatible, local 'Ollama', or deterministic mock
+    backends; estimates Generalizability Theory variance components and
+    D-study reliability projections (Brennan, 2001, ISBN:978-0-387-95282-6),
+    calibration against human gold standards and inter-rater reliability
+    ceilings, temporal drift, and Differential Prompt Functioning (DPF);
+    implements Prediction-Powered Inference (PPI, PPI++, category
+    prevalences, and clustered or multilevel extensions; Angelopoulos et al.,
+    2023 <doi:10.1126/science.adi6000>) alongside validation sample-size
+    planning, APA reporting tables, and 'ggplot2' diagnostic visualizations.
 License: MIT + file LICENSE
-URL: https://github.com/MarcusHarrisUConn/llmmetric
+URL: https://marcusharrisphd.com/llmmetric/,
+    https://github.com/MarcusHarrisUConn/llmmetric
 BugReports: https://github.com/MarcusHarrisUConn/llmmetric/issues
 Depends: 
     R (>= 4.1.0)
@@ -40,6 +45,7 @@ Suggests:
     withr
 VignetteBuilder: knitr
 Encoding: UTF-8
+Language: en-US
 LazyData: true
 Roxygen: list(markdown = TRUE)
 Config/testthat/edition: 3

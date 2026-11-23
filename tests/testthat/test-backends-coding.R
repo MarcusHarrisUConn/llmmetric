@@ -68,15 +68,19 @@ test_that("code_texts caches responses, retries malformed outputs, and supports 
   expect_true(all(res2$scores$cache_hit))
   expect_equal(res1$scores$score, res2$scores$score)
 
-  # With 0 retries and malformed_rate = 1, failures are cleanly recorded
-  res_fail <- code_texts(
-    df[1:2, ], "text", id_col = "id",
-    design = coding_design(prompts = c(p1 = "{text}"), models = "fast"),
-    backend = backend_mock(seed = 1, malformed_rate = 1),
-    cache = coding_cache("none"),
-    max_validation_retries = 0L
+  # With 0 retries and malformed_rate = 1, failures are cleanly recorded with a warning
+  expect_warning(
+    res_fail <- code_texts(
+      df[1:2, ], "text", id_col = "id",
+      design = coding_design(prompts = c(p1 = "{text}"), models = "fast"),
+      backend = backend_mock(seed = 1, malformed_rate = 1),
+      cache = coding_cache("none"),
+      max_validation_retries = 0L
+    ),
+    "coding cell"
   )
   expect_equal(nrow(res_fail$failures), 2L)
+  expect_equal(res_fail$failed_indices, c(1L, 2L))
   expect_true(all(!res_fail$scores$valid))
 
   # aggregate_scores collapses to unit level and retains unit-constant cov_x

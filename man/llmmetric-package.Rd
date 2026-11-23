@@ -8,18 +8,26 @@
 \description{
 Treats large language models (LLMs) explicitly as fallible psychometric
 measurement instruments. Provides multi-facet structured coding
-orchestration, Generalizability Theory (G-study and D-study), calibration
-and drift diagnostics, Differential Prompt Functioning (DPF) tests, and
-Prediction-Powered Inference (PPI, PPI++, and clustered/multilevel
-extensions) with publication-ready \code{ggplot2::autoplot()} diagnostics.
+orchestration with resumable checkpointing and hardened caching,
+Generalizability Theory (G-study and D-study), calibration against human
+gold standards and inter-rater reliability ceilings, temporal drift
+monitoring, Differential Prompt Functioning (DPF) invariance tests,
+Prediction-Powered Inference (PPI, PPI++, prevalence proportions, and
+clustered/multilevel extensions), validation sample-size/power planning,
+APA reporting tables, and publication-ready \code{ggplot2::autoplot()}
+diagnostics.
 }
 \seealso{
-Useful links:
+Key workflow entry points:
 \itemize{
-  \item \url{https://github.com/MarcusHarrisUConn/llmmetric}
-  \item Report bugs at \url{https://github.com/MarcusHarrisUConn/llmmetric/issues}
+\item Multi-facet coding: \code{\link[=coding_schema]{coding_schema()}}, \code{\link[=coding_design]{coding_design()}}, \code{\link[=code_texts]{code_texts()}},
+\code{\link[=coding_cache]{coding_cache()}}, \code{\link[=backend_openai]{backend_openai()}}, \code{\link[=backend_ollama]{backend_ollama()}}, \code{\link[=backend_mock]{backend_mock()}}
+\item Psychometrics & fairness: \code{\link[=g_study]{g_study()}}, \code{\link[=d_study]{d_study()}}, \code{\link[=calibration_metrics]{calibration_metrics()}},
+\code{\link[=human_irr]{human_irr()}}, \code{\link[=check_drift]{check_drift()}}, \code{\link[=dpf_test]{dpf_test()}}
+\item Error-corrected inference & planning: \code{\link[=ppi_mean]{ppi_mean()}}, \code{\link[=ppi_proportion]{ppi_proportion()}},
+\code{\link[=ppi_lm]{ppi_lm()}}, \code{\link[=ppi_glm]{ppi_glm()}}, \code{\link[=ppi_clustered]{ppi_clustered()}}, \code{\link[=ppi_lmer]{ppi_lmer()}},
+\code{\link[=ppi_sample_size]{ppi_sample_size()}}, \code{\link[=ppi_power]{ppi_power()}}, \code{\link[=format_apa_table]{format_apa_table()}}
 }
-
 }
 \author{
 \strong{Maintainer}: Marcus Harris \email{marcus.harris.uconn@gmail.com} [copyright holder]

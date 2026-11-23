@@ -8,8 +8,7 @@ backend_openai(
   model = "gpt-4o-mini",
   api_key = Sys.getenv("OPENAI_API_KEY"),
   base_url = "https://api.openai.com/v1",
-  system_prompt =
-    "You are a precise research coder. Return only valid JSON matching the requested schema.",
+  system_prompt = "Return only valid JSON matching the coding schema.",
   response_format = c("json_schema", "json_object", "none"),
   timeout = 60,
   max_retries = 3L,

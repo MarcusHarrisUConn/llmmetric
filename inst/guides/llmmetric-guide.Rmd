@@ -1,0 +1,163 @@
+---
+title: "llmmetric Methods Guide"
+subtitle: "Psychometric Reliability, Measurement Invariance, and Prediction-Powered Inference for LLM-Coded Research Data"
+author: "Marcus Harris"
+date: "Version 0.3.0 (2026)"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: pdflatex
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{booktabs}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6.2,
+  fig.height = 3.8,
+  fig.align = "center"
+)
+library(llmmetric)
+```
+
+# Overview
+
+Researchers across psychology, education, sociology, management, and health sciences increasingly deploy large language models (LLMs) to annotate open-ended survey responses, therapy transcripts, interviews, and ecological momentary assessment (EMA) diaries. Treating AI-generated scores as error-free gold-standard variables ignores prompt sensitivity, model variance, temporal drift, subgroup bias, and attenuated or anti-conservative standard errors.
+
+`llmmetric` operationalizes a formal four-stage psychometric validity framework:
+
+1. **Multi-Facet Structured Coding Engine** (`coding_schema()`, `coding_design()`, `code_texts()`, `coding_cache()`, `backend_openai()`, `backend_ollama()`, `backend_mock()`): reproducible crossed `unit x prompt x model x temperature x replicate` orchestration with strict JSON validation, resumable atomic checkpointing, and integrity-checked disk caching.
+2. **LLM Psychometrics & Generalizability Suite** (`g_study()`, `d_study()`, `calibration_metrics()`, `human_irr()`, `check_drift()`): Generalizability Theory variance decomposition, D-study reliability projections, calibration curves against human gold standards and inter-rater reliability ceilings, and temporal drift testing.
+3. **Differential Prompt Functioning (DPF)** (`dpf_test()`): uniform and non-uniform measurement invariance tests across observed subgroups with unit-clustered sandwich inference, per-prompt FDR screening, and `prompt x group` interaction tests.
+4. **Error-Corrected Downstream Inference & Study Planning** (`ppi_mean()`, `ppi_proportion()`, `ppi_lm()`, `ppi_glm()`, `ppi_clustered()`, `ppi_lmer()`, `ppi_sample_size()`, `ppi_power()`, `format_apa_table()`): Prediction-Powered Inference (`PPI` / `PPI++`) for provably valid confidence intervals and hypothesis tests.
+
+# Generalizability Theory for Multi-Facet LLM Coding
+
+For a crossed two-facet design crossing measurement units $u$, prompt templates $p$, and models $m$ (with $n_r = 1$ replicate per cell), observed LLM scores decompose as:
+
+$$
+Y_{upm} = \mu + v_u + v_p + v_m + v_{up} + v_{um} + v_{pm} + v_{upm,e}.
+$$
+
+`g_study()` estimates orthogonal variance components via REML (`lme4::lmer`) with an exact balanced-ANOVA Expected Mean Squares (Mobius inversion) fallback. For a D-study averaging over $n_p$ prompts and $n_m$ models, relative and absolute error variances are:
+
+$$
+\sigma_\delta^2(n_p, n_m) = \frac{\sigma_{up}^2}{n_p} + \frac{\sigma_{um}^2}{n_m} + \frac{\sigma_{upm,e}^2}{n_p n_m},
+\qquad
+\sigma_\Delta^2(n_p, n_m) = \frac{\sigma_p^2}{n_p} + \frac{\sigma_m^2}{n_m} + \frac{\sigma_{pm}^2}{n_p n_m} + \sigma_\delta^2(n_p, n_m),
+$$
+
+yielding the Generalizability coefficient $E\rho^2(n_p, n_m) = \sigma_u^2 / (\sigma_u^2 + \sigma_\delta^2)$ and Dependability index $\Phi(n_p, n_m) = \sigma_u^2 / (\sigma_u^2 + \sigma_\Delta^2)$.
+
+```{r guide-g-study}
+data(ema_coded)
+g <- g_study(ema_coded, score_col = "llm_score", facets = c("prompt", "model"))
+d <- d_study(g, grid = list(prompt = 1:8, model = 1:4), target = 0.90)
+g$variance_components[, c("component", "variance", "sd", "pct_total")]
+```
+
+```{r guide-d-plot, echo = FALSE}
+autoplot(d)
+```
+
+# Differential Prompt Functioning (DPF) and Human Ceilings
+
+Conditional on human gold-standard scores $Y_i$, `dpf_test()` compares three nested models across observed subgroups $G_i$:
+
+- **Model 0 (Invariant):** $g(\mathbb{E}[S_i \mid Y_i]) = \beta_0 + \beta_1 Y_i$
+- **Model 1 (Uniform DPF):** $g(\mathbb{E}[S_i \mid Y_i, G_i]) = \beta_0 + \beta_1 Y_i + \gamma^\top D(G_i)$
+- **Model 2 (Non-Uniform DPF):** $g(\mathbb{E}[S_i \mid Y_i, G_i]) = \beta_0 + \beta_1 Y_i + \gamma^\top D(G_i) + \eta^\top (Y_i \cdot D(G_i))$
+
+When multiple prompts score the same unit (`id_col`), `dpf_test()` automatically computes unit-clustered CR1 sandwich Wald $\chi^2$ tests to prevent pseudoreplication Type-I error inflation.
+
+```{r guide-dpf}
+dpf <- dpf_test(
+  ema_coded,
+  score_col = "llm_score",
+  truth_col = "human_score",
+  group_col = "group",
+  prompt_col = "prompt",
+  id_col = "unit_id"
+)
+dpf$tests[, c("test", "statistic", "df", "p_value", "delta_r2", "magnitude")]
+```
+
+# Prediction-Powered Inference (PPI, PPI++, and Multilevel Extensions)
+
+Let $\mathcal{L} = \{(X_i, Y_i, \hat{Y}_i)\}_{i=1}^n$ denote a human-validated sample and $\mathcal{U} = \{(X_j^u, \hat{Y}_j^u)\}_{j=1}^N$ an independent LLM-coded unlabeled corpus. For target parameter $\theta^* = \arg\min_\theta \mathbb{E}[\ell_\theta(X, Y)]$ with score $g_\theta = \nabla_\theta \ell_\theta$, the PPI++ objective (Angelopoulos et al., 2023, 2024) is:
+
+$$
+L_\lambda^{\text{PPI++}}(\theta) =
+  \frac{1}{n}\sum_{i=1}^n \ell_\theta(X_i, Y_i)
+  + \lambda\left(
+      \frac{1}{N}\sum_{j=1}^N \ell_\theta(X_j^u, \hat{Y}_j^u)
+      - \frac{1}{n}\sum_{i=1}^n \ell_\theta(X_i, \hat{Y}_i)
+    \right).
+$$
+
+Because $\mathbb{E}[\tilde{g}_{\theta^*}(X^u, \hat{Y}^u) - \tilde{g}_{\theta^*}(X, \hat{Y})] = \mathbf{0}$ for *arbitrary* LLM bias, attenuation, nonlinearity, or DPF, $\hat{\theta}_\lambda$ is consistent and asymptotically normal with centered plug-in sandwich covariance:
+
+$$
+\widehat{\mathrm{Var}}(\hat{\theta}_\lambda) =
+  \hat{H}_\lambda^{-1}\left[
+    \frac{1}{n}\widehat{\mathrm{Cov}}_{\mathcal{L}}\!\big(g_i - \lambda \tilde{g}_i\big)
+    + \frac{\lambda^2}{N}\widehat{\mathrm{Cov}}_{\mathcal{U}}\!\big(\tilde{g}_j^u\big)
+  \right]\hat{H}_\lambda^{-1},
+$$
+
+and optimal variance-minimizing tuning parameter:
+
+$$
+\hat{\lambda}^* =
+  \frac{\mathrm{tr}\!\big(\hat{H}^{-1}\hat{C}_{g,\tilde{g}}\hat{H}^{-1}\big)}
+       {\mathrm{tr}\!\big(\hat{H}^{-1}(\hat{V}_{\tilde{g},\mathcal{L}} + \frac{n}{N}\hat{V}_{\tilde{g},\mathcal{U}})\hat{H}^{-1}\big)}.
+$$
+
+For clustered and multilevel designs (`ppi_clustered()`, `ppi_lmer()`), scores are aggregated within clusters before squaring—handling both disjoint cluster validation (via exact Woodbury GLS weights) and overlapping within-cluster validation (via total-cluster inverse-variance weights)—to preserve exact unbiasedness and nominal coverage under strong intra-cluster correlation.
+
+```{r guide-ppi}
+unit_df <- aggregate_scores(ema_coded, score_col = "llm_score")
+fit_ml <- ppi_lmer(human_score ~ x + group + (1 | cluster), data = unit_df, pred_col = "llm_score")
+fit_ml$estimates[, c("term", "estimate", "std_error", "conf_low", "conf_high", "p_value")]
+```
+
+```{r guide-ppi-plot, echo = FALSE}
+autoplot(fit_ml, true_values = c(x = 1.1, groupgroup_b = 0.5))
+```
+
+# Validation Sample-Size and Power Planning
+
+Under optimal PPI++ tuning with single-observation human SD constant $\sigma = \mathrm{SE}_{\text{human}}\sqrt{n_0}$ and human-LLM score correlation $r$, asymptotic variance satisfies:
+
+$$
+\mathrm{Var}(\hat{\theta}_{\text{PPI++}}) = \frac{\sigma^2}{n}\left(1 - r^2 \frac{N}{n + N}\right).
+$$
+
+For a fixed corpus of $M = n + N$ texts and target variance $V_{\text{target}} > \sigma^2 / M$, the exact required human validation sample size is:
+
+$$
+n^* = \left\lceil \frac{\sigma^2 (1 - r^2)}{V_{\text{target}} - \sigma^2 r^2 / M} \right\rceil.
+$$
+
+```{r guide-plan}
+ppi_sample_size(target_se = 0.06, n_total = 2000, pilot = fit_ml, term = "x")
+```
+
+# Security & Reproducibility Guarantees
+
+- **Zero-leak API credentials:** `backend_openai()` stores API keys inside a non-serialized session vault (`llm_redacted_secret`) so keys never appear in `print()`, `summary()`, `str()`, `dput()`, `saveRDS()`, cache keys, or error messages.
+- **Hardened endpoints & parsers:** Strict `http://`/`https://` URL and CRLF header validation, bounded response sizes, jittered backoff, duplicate-key rejection, and multi-block prompt-injection rejection in `validate_coded_output()`.
+- **Integrity-checked atomic caching:** `coding_cache("disk")` prevents directory traversal, writes atomically via temp-file rename, and verifies SHA-256 checksums on every read, evicting corrupted files gracefully.
+
+# References
+
+- Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T. (2023). Prediction-powered inference. *Science*, 382(6671), 669--674.
+- Angelopoulos, A. N., Duchi, J. C., & Zrnic, T. (2024). PPI++: Efficient prediction-powered inference. *arXiv:2311.01453*.
+- Brennan, R. L. (2001). *Generalizability Theory*. Springer.
+- Zumbo, B. D. (1999). *A Handbook on the Theory and Methods of Differential Item Functioning (DIF)*. Ottawa: Department of National Defense.

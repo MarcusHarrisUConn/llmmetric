@@ -39,3 +39,11 @@ Low-level helpers operating on an \code{\link[=coding_cache]{coding_cache()}} ob
 validated strictly against path traversal and unsafe characters; disk cache
 writes are atomic and integrity-checked via SHA-256 checksums.
 }
+\examples{
+mc <- coding_cache("memory")
+k <- cache_key("u1", "p1", "m1")
+cache_set(mc, k, list(score = 4.5))
+cache_get(mc, k)
+cache_stats(mc)
+cache_clear(mc)
+}

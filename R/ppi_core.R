@@ -55,6 +55,12 @@ prepare_ppi_data <- function(data,
 }
 
 #' Build synchronized model matrices on labeled and unlabeled data frames
+#'
+#' Harmonizes factor and character predictor levels across labeled and unlabeled
+#' splits so complex formulas (interactions, polynomials, multi-level factors)
+#' align cleanly without `model.matrix()` contrast errors. Emits clear
+#' diagnostics for unseen levels in unlabeled data and errors cleanly on
+#' single-level (constant) factor predictors.
 #' @noRd
 build_ppi_model_matrices <- function(formula, labeled_df, unlabeled_df) {
   rhs_fml <- stats::delete.response(stats::terms(formula, data = labeled_df))
@@ -63,11 +69,46 @@ build_ppi_model_matrices <- function(formula, labeled_df, unlabeled_df) {
   n_lab <- nrow(labeled_df)
   n_unlab <- nrow(unlabeled_df)
 
+  unseen_levels <- list()
+
   if (length(rhs_vars) > 0L) {
-    comb <- rbind(
-      labeled_df[, rhs_vars, drop = FALSE],
-      unlabeled_df[, rhs_vars, drop = FALSE]
-    )
+    lab_sub <- as.data.frame(labeled_df[, rhs_vars, drop = FALSE], stringsAsFactors = FALSE)
+    unlab_sub <- as.data.frame(unlabeled_df[, rhs_vars, drop = FALSE], stringsAsFactors = FALSE)
+
+    for (v in rhs_vars) {
+      lv_l <- lab_sub[[v]]
+      lv_u <- unlab_sub[[v]]
+      is_cat_l <- is.factor(lv_l) || is.character(lv_l)
+      is_cat_u <- is.factor(lv_u) || is.character(lv_u)
+
+      if (is_cat_l || is_cat_u) {
+        chr_l <- as.character(lv_l)
+        chr_u <- as.character(lv_u)
+        # Preserve labeled factor level order first so reference level stays stable
+        base_lvls <- if (is.factor(lv_l)) {
+          intersect(levels(lv_l), unique(chr_l))
+        } else {
+          sort(unique(chr_l))
+        }
+        extra_u <- setdiff(unique(chr_u), base_lvls)
+        if (length(extra_u) > 0L) {
+          unseen_levels[[v]] <- extra_u
+          cli::cli_warn(
+            "Predictor {.val {v}} contains level{?s} in unlabeled data never observed in the labeled validation sample ({.val {extra_u}}); affected contrast{?s} cannot be identified from validation labels and will be aliased."
+          )
+        }
+        all_lvls <- c(base_lvls, sort(extra_u))
+        if (length(all_lvls) < 2L) {
+          cli::cli_abort(
+            "Categorical predictor {.val {v}} has fewer than 2 distinct levels across the data ({.val {all_lvls}}); drop constant factor predictors from {.arg formula}."
+          )
+        }
+        lab_sub[[v]] <- factor(chr_l, levels = all_lvls)
+        unlab_sub[[v]] <- factor(chr_u, levels = all_lvls)
+      }
+    }
+
+    comb <- rbind(lab_sub, unlab_sub)
     mf_comb <- stats::model.frame(rhs_fml, data = comb, na.action = stats::na.fail)
     X_comb <- stats::model.matrix(rhs_fml, data = mf_comb)
     X_lab <- X_comb[seq_len(n_lab), , drop = FALSE]
@@ -80,7 +121,7 @@ build_ppi_model_matrices <- function(formula, labeled_df, unlabeled_df) {
   assert_finite_values(as.numeric(X_lab), "model matrix (labeled)")
   assert_finite_values(as.numeric(X_unlab), "model matrix (unlabeled)")
 
-  list(X_lab = X_lab, X_unlab = X_unlab, terms = rhs_fml)
+  list(X_lab = X_lab, X_unlab = X_unlab, terms = rhs_fml, unseen_levels = unseen_levels)
 }
 
 #' Normalize canonical GLM family specification (gaussian, binomial, poisson)

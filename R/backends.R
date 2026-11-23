@@ -12,6 +12,17 @@
 #' @return A list with at least `content` (JSON character string or named list)
 #'   and optional metadata (`model`, `latency_ms`, `raw_response`).
 #' @export
+#'
+#' @examples
+#' b <- backend_mock(seed = 1)
+#' s <- coding_schema(score = schema_field("numeric"))
+#' req <- list(
+#'   unit_id = "u1", text = "Example text", prompt_id = "p1",
+#'   prompt_text = "Rate: Example text", model = "m1",
+#'   temperature = 0, replicate = 1L, schema = s, attempt = 1L,
+#'   meta = list(true_score = 2.0)
+#' )
+#' backend_score(b, req)$content
 backend_score <- function(backend, request, ...) {
   UseMethod("backend_score")
 }
@@ -338,7 +349,7 @@ backend_score.llm_backend_mock <- function(backend, request, ...) {
 backend_openai <- function(model = "gpt-4o-mini",
                            api_key = Sys.getenv("OPENAI_API_KEY"),
                            base_url = "https://api.openai.com/v1",
-                           system_prompt = "You are a precise research coder. Return only valid JSON matching the requested schema.",
+                           system_prompt = "Return only valid JSON matching the coding schema.",
                            response_format = c("json_schema", "json_object", "none"),
                            timeout = 60,
                            max_retries = 3L,
@@ -545,7 +556,7 @@ backend_score.llm_backend_openai <- function(backend, request, ...) {
 #' b
 backend_ollama <- function(model = "llama3.2",
                            base_url = "http://localhost:11434",
-                           system_prompt = "You are a precise research coder. Return only valid JSON matching the requested schema.",
+                           system_prompt = "Return only valid JSON matching the coding schema.",
                            format = c("schema", "json", "none"),
                            timeout = 120,
                            max_retries = 2L,
