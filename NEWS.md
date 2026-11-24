@@ -1,3 +1,15 @@
+# llmmetric 0.5.1
+
+## JSON Schema & Structured Output Fixes
+- **Single-Field JSON Schema Array Serialization (`as_json_schema()`):** Wrapped `required` and `enum` in `I(as.character(...))` so `httr2::req_body_json(..., auto_unbox = TRUE)` and `jsonlite::toJSON(..., auto_unbox = TRUE)` always serialize `"required": ["score"]` (and `"required": []` / `"enum": [...]`) as JSON arrays rather than bare strings when a schema has a single required field—fixing HTTP 400 rejections on live Ollama `/api/chat` and OpenAI Structured Outputs endpoints.
+
+## Cross-Platform & Windows Compatibility Fixes
+- **Windows Path & Symlink Containment (`is_symlink_path()`, `resolve_safe_cache_path()`, `coding_cache()`):** Added `canonical_path_key()` normalizing backslashes, trailing slashes, and Windows case-insensitive drive paths, plus a canonical `normalizePath()` fallback in `is_symlink_path()` so Windows NTFS file symlinks (where `Sys.readlink()` may return `""`) and trailing-slash symlink directories are detected reliably without false positives on Windows 8.3 short paths (`RUNNER~1`) or macOS `/var` temp directories. Also rejects symlinked `dir` upfront in `coding_cache("disk", dir = ...)`.
+- **Cross-Platform Permissions & Atomic Writes (`restrict_file_permissions()`, `cache_set()`, `code_texts()`):** Applied `0600` file permissions (`use_umask = FALSE`) exclusively on POSIX platforms (avoiding Windows `Sys.chmod()` quirks), placed disk cache temporary files inside `dirname(path)`, and suppressed fallback `file.rename()` overwrite warnings on Windows.
+- **Portable Symlink Tests (`tests/testthat/test-peer-redteam.R`):** Isolated symlink security regression tests with an OS-availability guard (`file.symlink()`), accepted both symlink-rejection and path-escape error messages across platforms, and added direct unit tests for Windows path canonicalization and symlinked checkpoints/cache directories.
+
+---
+
 # llmmetric 0.5.0
 
 ## Security Hardening (Independent Peer Red-Team Audit Remediation)

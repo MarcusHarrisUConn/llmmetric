@@ -36,6 +36,7 @@ LLMs
 LiteLLM
 MiB
 Miscalibration
+NTFS
 Neyman
 Ollama
 OpenAI
@@ -68,6 +69,7 @@ asymptotes
 backoff
 benchmarked
 booktabs
+canonicalization
 cdot
 checkpointed
 checkpointing
@@ -104,6 +106,7 @@ runnable
 scorings
 stressor
 symlink
+symlinked
 th
 tibble
 unbiasedness

@@ -23,6 +23,41 @@ test_that("coding_schema and schema_field validate definitions and export JSON S
   expect_error(schema_field("numeric", min = 5, max = 2))
   expect_error(schema_field("factor", levels = "only_one"))
   expect_error(coding_schema())
+
+  # Single-required-field and 0-required-field schemas must always serialize
+  # `required` (and `enum`) as JSON arrays under auto_unbox = TRUE (Ollama / OpenAI)
+  s1 <- coding_schema(score = schema_field("numeric", min = 1, max = 5))
+  js1 <- as_json_schema(s1)
+  json1 <- as.character(jsonlite::toJSON(js1, auto_unbox = TRUE))
+  expect_match(json1, '"required":\\["score"\\]')
+  parsed1 <- jsonlite::fromJSON(json1, simplifyVector = FALSE)
+  expect_true(is.list(parsed1$required))
+  expect_identical(parsed1$required, list("score"))
+
+  # Verify actual httr2::req_body_json() wire payload for Ollama & OpenAI specs
+  ol_spec <- llmmetric:::build_ollama_request_spec(
+    backend_ollama(model = "llama3.2"),
+    list(prompt_text = "Rate: hi", model = "llama3.2", temperature = 0, schema = s1)
+  )
+  ol_req <- httr2::req_body_json(httr2::request(ol_spec$url), ol_spec$body, auto_unbox = TRUE)
+  ol_wire <- rawToChar(httr2::req_dry_run(ol_req, quiet = TRUE)$body)
+  expect_match(ol_wire, '"required":\\["score"\\]')
+
+  oa_spec <- llmmetric:::build_openai_request_spec(
+    backend_openai(model = "gpt-4o-mini", api_key = "k"),
+    list(prompt_text = "Rate: hi", model = "gpt-4o-mini", temperature = 0, schema = s1)
+  )
+  oa_req <- httr2::req_body_json(httr2::request(oa_spec$url), oa_spec$body, auto_unbox = TRUE)
+  oa_wire <- rawToChar(httr2::req_dry_run(oa_req, quiet = TRUE)$body)
+  expect_match(oa_wire, '"required":\\["score"\\]')
+
+  # 0 required fields -> empty JSON array `[]`, enum -> JSON array
+  s0 <- coding_schema(
+    cat = schema_field("enum", levels = c("a", "b"), required = FALSE)
+  )
+  json0 <- as.character(jsonlite::toJSON(as_json_schema(s0), auto_unbox = TRUE))
+  expect_match(json0, '"required":\\[\\]')
+  expect_match(json0, '"enum":\\["a","b"\\]')
 })
 
 test_that("validate_coded_output enforces types, bounds, enums, fences, strictness, and coercion", {

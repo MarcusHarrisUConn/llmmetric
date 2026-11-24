@@ -185,7 +185,7 @@ as_json_schema <- function(schema) {
       prop$maximum <- f$max
     }
     if (!is.null(f$levels)) {
-      prop$enum <- as.list(f$levels)
+      prop$enum <- I(as.character(f$levels))
     }
     properties[[nm]] <- prop
     if (isTRUE(f$required)) {
@@ -196,7 +196,7 @@ as_json_schema <- function(schema) {
   list(
     type = "object",
     properties = properties,
-    required = required_fields,
+    required = I(as.character(required_fields)),
     additionalProperties = !isTRUE(schema$strict)
   )
 }

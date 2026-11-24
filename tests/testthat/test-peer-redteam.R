@@ -300,13 +300,36 @@ test_that("HIGH-6 & MEDIUM-7: ppi_clustered matches human_only at lambda=0, reje
   )
 })
 
-test_that("HIGH-7 & HIGH-8 & MEDIUM-2: symlink cache escape blocked, extra_headers sealed/redacted, keep_raw & checkpoint hardened", {
-  # HIGH-7: Symlink inside disk cache directory rejected
+test_that("HIGH-7: symlink cache/checkpoint escapes and Windows path normalization are hardened", {
+  # Cross-platform canonical_path_key() normalization (runs on all OSes)
+  expect_identical(
+    llmmetric:::canonical_path_key("C:\\Users\\Runner\\Temp\\cache\\", windows = TRUE),
+    "c:/users/runner/temp/cache"
+  )
+  expect_identical(
+    llmmetric:::canonical_path_key("C:\\", windows = TRUE),
+    "c:/"
+  )
+  expect_identical(
+    llmmetric:::canonical_path_key("/tmp/cache/", windows = FALSE),
+    "/tmp/cache"
+  )
+  expect_identical(
+    llmmetric:::canonical_path_key("/", windows = FALSE),
+    "/"
+  )
+  expect_false(llmmetric:::is_symlink_path(""))
+  expect_false(llmmetric:::is_symlink_path(NA_character_))
+
+  # Normal files and directories inside tempdir are never misclassified as symlinks
   cdir <- tempfile("cdir_")
   out_dir <- tempfile("out_")
   dir.create(cdir)
   dir.create(out_dir)
   on.exit(unlink(c(cdir, out_dir), recursive = TRUE), add = TRUE)
+
+  expect_false(llmmetric:::is_symlink_path(cdir))
+  expect_false(llmmetric:::is_symlink_path(file.path(cdir, "does_not_exist.rds")))
 
   target <- file.path(out_dir, "victim.rds")
   saveRDS(list(
@@ -314,9 +337,49 @@ test_that("HIGH-7 & HIGH-8 & MEDIUM-2: symlink cache escape blocked, extra_heade
     checksum = digest::digest(list(poisoned = TRUE), algo = "sha256"),
     payload = list(poisoned = TRUE)
   ), target)
-  file.symlink(target, file.path(cdir, "symkey_123.rds"))
-  expect_error(cache_get(coding_cache("disk", dir = cdir), "symkey_123"), "Symbolic link")
+  expect_false(llmmetric:::is_symlink_path(target))
 
+  # Symlink file inside disk cache directory rejected on get & set
+  sym_entry <- file.path(cdir, "symkey_123.rds")
+  if (!isTRUE(suppressWarnings(file.symlink(target, sym_entry)))) {
+    skip("Symlinks unavailable on this OS")
+  }
+  expect_true(llmmetric:::is_symlink_path(sym_entry))
+  expect_error(
+    cache_get(coding_cache("disk", dir = cdir), "symkey_123"),
+    "Symbolic link|escapes the configured cache directory"
+  )
+  expect_error(
+    cache_set(coding_cache("disk", dir = cdir), "symkey_123", list(x = 1)),
+    "Symbolic link|escapes the configured cache directory"
+  )
+
+  # Symlink checkpoint_file rejected
+  des <- coding_design(
+    prompts = c(p1 = "{text}"),
+    models = "m1",
+    schema = coding_schema(score = "numeric")
+  )
+  expect_error(
+    code_texts(
+      tibble::tibble(id = "u1", text = "hi"), "text", id_col = "id",
+      design = des, backend = backend_mock(), checkpoint_file = sym_entry
+    ),
+    "Symbolic link"
+  )
+
+  # Symlink directory rejected by coding_cache("disk", ...)
+  sym_dir <- tempfile("symdir_")
+  on.exit(unlink(sym_dir, recursive = TRUE), add = TRUE)
+  if (isTRUE(suppressWarnings(file.symlink(out_dir, sym_dir)))) {
+    expect_error(
+      coding_cache("disk", dir = sym_dir),
+      "Symbolic link"
+    )
+  }
+})
+
+test_that("HIGH-8 & MEDIUM-2: extra_headers sealed/redacted, keep_raw & checkpoint hardened", {
   # HIGH-8: extra_headers sealed in secret vault and redacted from errors
   sec_hdr <- "x-secret-header-token-77777"
   b_hdr <- backend_openai(

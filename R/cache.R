@@ -25,8 +25,14 @@ coding_cache <- function(type = c("memory", "disk", "none"), dir = NULL) {
     if (grepl("[[:cntrl:]]", dir)) {
       cli::cli_abort("{.arg dir} must not contain control characters.")
     }
+    if (is_symlink_path(dir)) {
+      cli::cli_abort("Symbolic link cache directories are rejected for security.")
+    }
     if (!dir.exists(dir)) {
       dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    }
+    if (!dir.exists(dir)) {
+      cli::cli_abort("Failed to create or access disk cache directory {.path {dir}}.")
     }
     dir <- normalizePath(dir, winslash = "/", mustWork = TRUE)
   }
@@ -170,21 +176,21 @@ cache_set <- function(cache, key, value) {
     digest::digest(list(Sys.getpid(), safe_key, cache$state$writes, proc.time()[["elapsed"]]), algo = "sha256"),
     1L, 12L
   )
-  tmp_path <- file.path(cache$dir, paste0(".", safe_key, "_", tmp_suffix, ".tmp"))
+  tmp_path <- file.path(dirname(path), paste0(".", safe_key, "_", tmp_suffix, ".tmp"))
   on.exit(if (file.exists(tmp_path)) unlink(tmp_path), add = TRUE)
 
   saveRDS(envelope, file = tmp_path)
-  suppressWarnings(Sys.chmod(tmp_path, mode = "0600"))
-  ok <- file.rename(tmp_path, path)
+  restrict_file_permissions(tmp_path)
+  ok <- suppressWarnings(file.rename(tmp_path, path))
   if (!isTRUE(ok)) {
     # Fallback overwrite if target existed on platforms where rename does not replace
-    ok <- file.copy(tmp_path, path, overwrite = TRUE)
+    ok <- suppressWarnings(file.copy(tmp_path, path, overwrite = TRUE))
     unlink(tmp_path)
   }
   if (!isTRUE(ok)) {
     cli::cli_abort("Failed to atomically persist disk cache entry {.val {safe_key}}.")
   }
-  suppressWarnings(Sys.chmod(path, mode = "0600"))
+  restrict_file_permissions(path)
 
   cache$state$writes <- cache$state$writes + 1L
   invisible(TRUE)

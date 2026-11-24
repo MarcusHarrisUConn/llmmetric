@@ -185,11 +185,81 @@ validate_cache_key_safe <- function(key, arg = "key") {
   key
 }
 
+#' Normalize a path string into a cross-platform comparison key
+#'
+#' Normalizes backslashes to forward slashes, strips non-root trailing slashes,
+#' and folds case on Windows so drive-letter and NTFS case differences never
+#' cause false-positive containment rejections.
+#' @noRd
+canonical_path_key <- function(path, windows = identical(.Platform$OS.type, "windows")) {
+  p <- gsub("\\\\", "/", path)
+  if (!grepl("^(/|[A-Za-z]:/)$", p)) {
+    p <- sub("/+$", "", p)
+  }
+  if (isTRUE(windows)) {
+    p <- tolower(p)
+  }
+  p
+}
+
+#' Restrict file permissions to owner-only (0600) on POSIX platforms
+#' @noRd
+restrict_file_permissions <- function(path) {
+  if (!identical(.Platform$OS.type, "windows") && file.exists(path)) {
+    suppressWarnings(Sys.chmod(path, mode = "0600", use_umask = FALSE))
+  }
+  invisible(path)
+}
+
 #' Check whether a filesystem path is a symbolic link
 #' @noRd
 is_symlink_path <- function(path) {
-  rl <- Sys.readlink(path)
-  !is.na(rl) && nzchar(rl)
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+    return(FALSE)
+  }
+  clean <- path
+  if (!grepl("^([/\\\\]+|[A-Za-z]:[/\\\\]*)$", clean)) {
+    clean <- sub("[/\\\\]+$", "", clean)
+  }
+  rl <- suppressWarnings(Sys.readlink(clean))
+  if (!is.na(rl) && nzchar(rl)) {
+    return(TRUE)
+  }
+  # Fallback for platforms (notably Windows file symlinks) where Sys.readlink()
+  # may return "" even though normalizePath() resolves the symlink target.
+  if (file.exists(clean)) {
+    base_part <- basename(clean)
+    parent_part <- dirname(clean)
+    if (!base_part %in% c("", ".", "..") && !identical(parent_part, clean)) {
+      parent_norm <- tryCatch(
+        normalizePath(parent_part, winslash = "/", mustWork = TRUE),
+        error = function(e) NULL
+      )
+      actual_norm <- tryCatch(
+        normalizePath(clean, winslash = "/", mustWork = TRUE),
+        error = function(e) NULL
+      )
+      if (!is.null(parent_norm) && !is.null(actual_norm)) {
+        if (!identical(canonical_path_key(dirname(actual_norm)), canonical_path_key(parent_norm))) {
+          return(TRUE)
+        }
+        is_win_short <- identical(.Platform$OS.type, "windows") && grepl("~[0-9]+", base_part)
+        if (!is_win_short) {
+          actual_base <- basename(actual_norm)
+          same_base <- if (identical(.Platform$OS.type, "windows") ||
+                           identical(Sys.info()[["sysname"]], "Darwin")) {
+            identical(tolower(actual_base), tolower(base_part))
+          } else {
+            identical(actual_base, base_part)
+          }
+          if (!same_base) {
+            return(TRUE)
+          }
+        }
+      }
+    }
+  }
+  FALSE
 }
 
 #' Resolve a disk cache file path and verify it stays strictly within the cache directory
@@ -200,17 +270,18 @@ resolve_safe_cache_path <- function(cache_dir, key) {
     cli::cli_abort("Symbolic link cache directories are rejected for security.")
   }
   dir_norm <- normalizePath(cache_dir, winslash = "/", mustWork = TRUE)
+  dir_key <- canonical_path_key(dir_norm)
   candidate <- file.path(dir_norm, paste0(safe_key, ".rds"))
   if (is_symlink_path(candidate)) {
     cli::cli_abort("Symbolic link cache entry rejected: path escapes cache containment policy.")
   }
   parent_norm <- normalizePath(dirname(candidate), winslash = "/", mustWork = TRUE)
-  if (!identical(parent_norm, dir_norm)) {
+  if (!identical(canonical_path_key(parent_norm), dir_key)) {
     cli::cli_abort("Resolved cache path escapes the configured cache directory.")
   }
   if (file.exists(candidate)) {
     cand_norm <- normalizePath(candidate, winslash = "/", mustWork = TRUE)
-    if (!identical(dirname(cand_norm), dir_norm)) {
+    if (!identical(canonical_path_key(dirname(cand_norm)), dir_key)) {
       cli::cli_abort("Resolved cache file escapes the configured cache directory.")
     }
   }

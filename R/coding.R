@@ -221,7 +221,7 @@ code_texts <- function(data,
     tmp_path <- file.path(dirname(path), paste0(".", basename(path), "_", tmp_suffix, ".tmp"))
     on.exit(if (file.exists(tmp_path)) unlink(tmp_path), add = TRUE)
     saveRDS(env_payload, file = tmp_path)
-    suppressWarnings(Sys.chmod(tmp_path, mode = "0600"))
+    restrict_file_permissions(tmp_path)
     ok <- suppressWarnings(file.rename(tmp_path, path))
     if (!isTRUE(ok)) {
       ok <- suppressWarnings(file.copy(tmp_path, path, overwrite = TRUE))
@@ -230,7 +230,7 @@ code_texts <- function(data,
     if (!isTRUE(ok)) {
       cli::cli_abort("Failed to persist checkpoint file {.path {path}}.")
     }
-    suppressWarnings(Sys.chmod(path, mode = "0600"))
+    restrict_file_permissions(path)
     invisible(TRUE)
   }
 
