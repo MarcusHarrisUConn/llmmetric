@@ -34,13 +34,13 @@ test_that("coding_schema and schema_field validate definitions and export JSON S
   expect_true(is.list(parsed1$required))
   expect_identical(parsed1$required, list("score"))
 
-  # Verify actual httr2::req_body_json() wire payload for Ollama & OpenAI specs
+  # Verify actual httr2::req_body_json() serialized payload (without requiring httpuv)
   ol_spec <- llmmetric:::build_ollama_request_spec(
     backend_ollama(model = "llama3.2"),
     list(prompt_text = "Rate: hi", model = "llama3.2", temperature = 0, schema = s1)
   )
   ol_req <- httr2::req_body_json(httr2::request(ol_spec$url), ol_spec$body, auto_unbox = TRUE)
-  ol_wire <- rawToChar(httr2::req_dry_run(ol_req, quiet = TRUE)$body)
+  ol_wire <- as.character(do.call(jsonlite::toJSON, c(list(ol_req$body$data), ol_req$body$params)))
   expect_match(ol_wire, '"required":\\["score"\\]')
 
   oa_spec <- llmmetric:::build_openai_request_spec(
@@ -48,7 +48,7 @@ test_that("coding_schema and schema_field validate definitions and export JSON S
     list(prompt_text = "Rate: hi", model = "gpt-4o-mini", temperature = 0, schema = s1)
   )
   oa_req <- httr2::req_body_json(httr2::request(oa_spec$url), oa_spec$body, auto_unbox = TRUE)
-  oa_wire <- rawToChar(httr2::req_dry_run(oa_req, quiet = TRUE)$body)
+  oa_wire <- as.character(do.call(jsonlite::toJSON, c(list(oa_req$body$data), oa_req$body$params)))
   expect_match(oa_wire, '"required":\\["score"\\]')
 
   # 0 required fields -> empty JSON array `[]`, enum -> JSON array

@@ -1,3 +1,9 @@
+# llmmetric 0.5.2
+
+- **CI Test Portability (`tests/testthat/test-schema-cache.R`):** Removed `httr2::req_dry_run()` (which required undeclared `httpuv`) in favor of inspecting `httr2::req_body_json()`'s serialized payload directly via `jsonlite::toJSON()`.
+
+---
+
 # llmmetric 0.5.1
 
 ## JSON Schema & Structured Output Fixes
