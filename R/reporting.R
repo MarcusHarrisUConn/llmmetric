@@ -131,11 +131,20 @@ build_apa_ppi <- function(obj, digits, terms, include_intercept, caption, note) 
   }
 
   primary_method <- obj$method
-  method_order <- c("naive_llm", "human_only", primary_method)
-  pretty_map <- stats::setNames(
-    c("Naive LLM", "Human-Only", toupper(primary_method)),
-    method_order
-  )
+  has_uncal <- "ppi++_uncalibrated" %in% b$method
+  if (has_uncal) {
+    method_order <- c("naive_llm", "human_only", "ppi++_uncalibrated", primary_method)
+    pretty_map <- stats::setNames(
+      c("Naive LLM", "Human-Only", "PPI++ (Uncal.)", "PPI++ (Calibrated)"),
+      method_order
+    )
+  } else {
+    method_order <- c("naive_llm", "human_only", primary_method)
+    pretty_map <- stats::setNames(
+      c("Naive LLM", "Human-Only", toupper(primary_method)),
+      method_order
+    )
+  }
 
   # Order grouped by term, then Naive -> Human-Only -> PPI++
   term_levels <- unique(b$term)

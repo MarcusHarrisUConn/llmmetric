@@ -2,7 +2,7 @@
 % Please edit documentation in R/ppi_models.R
 \name{ppi_mean}
 \alias{ppi_mean}
-\title{Prediction-Powered Mean Estimation (PPI / PPI++)}
+\title{Prediction-Powered Mean Estimation (PPI / PPI++ / Active IPW-PPI)}
 \usage{
 ppi_mean(
   data,
@@ -11,7 +11,9 @@ ppi_mean(
   unlabeled = NULL,
   lambda = "auto",
   conf_level = 0.95,
-  clip_lambda = FALSE
+  clip_lambda = FALSE,
+  weights = NULL,
+  inclusion_prob = NULL
 )
 }
 \arguments{
@@ -35,6 +37,16 @@ containing \code{pred_col}.}
 \item{clip_lambda}{Logical; if \code{TRUE}, constrains auto-tuned \code{lambda} to
 \verb{[0, 1]}. Default \code{FALSE} (unconstrained optimal regression control variate
 is always convex for mean estimation).}
+
+\item{weights}{Optional Horvitz-Thompson sampling weights \eqn{w_i > 0} for
+stratified/active validation sampling: either a column name in \code{data} or a
+numeric vector aligned with \code{data} (or the labeled subset). Mutually
+exclusive with \code{inclusion_prob}.}
+
+\item{inclusion_prob}{Optional validation inclusion probabilities
+\eqn{\pi_i \in (0, 1]} (converting to \eqn{w_i = 1 / \pi_i}): either a
+column name in \code{data} or a numeric vector. Mutually exclusive with
+\code{weights}.}
 }
 \value{
 An S3 object of class \code{c("llm_ppi_mean", "llm_ppi")} containing
@@ -46,9 +58,10 @@ methods (\code{print()}, \code{summary()}, \code{coef()}, \code{vcov()}, \code{c
 Estimates the population mean \eqn{\theta^* = \mathbb{E}[Y]} by combining
 a human-validated sample (\code{truth_col} observed) with a larger LLM-coded
 unlabeled sample (\code{pred_col} only). Implements both standard PPI
-(\code{lambda = 1}) and power-tuned PPI++ (\code{lambda = "auto"}, minimizing
-asymptotic variance via the exact optimal control-variate weight), alongside
-human-only and naive-LLM benchmarks.
+(\code{lambda = 1}) and power-tuned PPI++ (\code{lambda = "auto"}), and supports
+Horvitz-Thompson inverse-probability-weighted (IPW) active/stratified
+validation designs via \code{weights} or \code{inclusion_prob} (e.g., produced by
+\code{\link[=select_validation_sample]{select_validation_sample()}}).
 }
 \examples{
 set.seed(42)

@@ -1,3 +1,23 @@
+# llmmetric 0.4.0
+
+## New Features
+- **Stratified & Active Validation Sampling (`select_validation_sample()`):** Draws reproducible human-validation subsets under simple random (`"simple"`), subgroup-stratified (`"stratified"` with `"proportional"`, `"equal"`, or `"neyman"` allocation), score-based Neyman (`"neyman"`), score-quantile (`"quantile"`), and whole-cluster (`"cluster"`) designs, returning exact inclusion probabilities $\pi_i \in (0, 1]$ and Horvitz-Thompson weights $w_i = 1 / \pi_i$ without mutating global `.Random.seed`.
+- **Horvitz-Thompson Active / IPW-PPI (`ppi_mean()`, `ppi_lm()`):** Added `weights` and `inclusion_prob` parameters implementing exact Active/IPW-PPI++ (Zrnic & Candès, 2024) with Hájek weight normalization, optimal IPW power-tuning $\hat{\lambda}^*_{\text{IPW}}$, and valid IPW sandwich SEs—preserving nominal ~95% CI coverage under unequal-probability stratified validation sampling (verified via Monte Carlo simulation tests).
+- **Cross-Fitted Non-Linear Calibration (`ppi_calibrated()`):** Handles ceiling/floor compression, S-curve saturation, and covariate-dependent non-linear LLM distortion via strict $K$-fold cross-fitted natural cubic splines (`splines::ns()`), polynomial bases, logistic splines, or custom R calibration functions, with fold-weighted unlabeled aggregation, out-of-fold calibration diagnostics (`$calibration_diagnostics`), and 4-way `autoplot()` & `format_apa_table()` comparisons (`ppi++_calibrated`, `ppi++_uncalibrated`, `human_only`, `naive_llm`).
+- **Custom R Callable Backend Adapter (`backend_custom()`):** Zero-dependency adapter wrapping any local R function `fn(request)` (e.g., offline `airgapllm` pipelines, local Python/C++ model wrappers, or custom scorers) directly into `code_texts()` with full JSON schema validation, retry handling, content-addressed caching, and resumable checkpointing.
+
+## Bug Fixes & Coverage Hardening
+- **`covr`-Driven Latent Bug Audit:** Drove overall line coverage from 83.9% to > 92% via targeted branch tests and fixed three latent edge-case bugs uncovered during the audit:
+  - Fixed polynomial basis formula construction in `dpf_test(poly_degree >= 2)` where `I(t_c^1)` collided with `t_c:group` interaction terms, causing `NA` conditional slopes.
+  - Preserved column/row `dimnames` across SVD pseudo-inverse fallbacks in `safe_solve()` and `vcov_cluster_fit()`.
+  - Added constant-outcome early-return protection in `fit_prompt_group_interaction()` to prevent spurious `summary.lm` warnings on zero-variance ratings.
+
+## Documentation & Vignettes
+- Added 5th executable vignette: `stratified-and-nonlinear-ppi` covering `select_validation_sample()`, active IPW-PPI, `ppi_calibrated()`, and `backend_custom()`.
+- Updated the standalone Psychometric AI & PPI Methods Guide (`docs/llmmetric-guide.pdf`) and `pkgdown` reference site for version `0.4.0`.
+
+---
+
 # llmmetric 0.3.0
 
 ## New Features & Workflow Hardening

@@ -693,6 +693,112 @@ backend_score.llm_backend_ollama <- function(backend, request, ...) {
   )
 }
 
+#' Custom R-Function LLM Coding Backend Adapter
+#'
+#' Wraps any R callable `fn(request)` — such as an offline `airgapllm`
+#' pipeline, local Python/C++ model wrapper, or custom heuristic scorer — into
+#' an `llm_backend` compatible with [code_texts()], preserving full JSON schema
+#' validation, retries, content-addressed caching, resumable checkpointing, and
+#' downstream G-study/DPF/PPI analysis with zero extra package dependencies.
+#'
+#' @param fn A function accepting a single `request` list (containing
+#'   `unit_id`, `text`, `prompt_id`, `prompt_text`, `model`, `temperature`,
+#'   `replicate`, `schema`, `attempt`, `previous_errors`, and `meta`). `fn` may
+#'   return:
+#'   - a JSON character string,
+#'   - a named R list matching the fields of `request$schema`,
+#'   - a 1-row `data.frame` matching `request$schema`, or
+#'   - a full response list containing `content` (plus optional `model` and
+#'     `raw_response`).
+#' @param name Descriptive identifier for the custom backend (included in
+#'   content-addressed cache keys). Default `"custom"`.
+#' @param version Version string for cache invalidation when `fn` changes.
+#'   Default `"1.0"`.
+#' @param metadata Optional named list of extra cache-key metadata (e.g.,
+#'   model weights hash or runtime parameters).
+#'
+#' @return An object of class `c("llm_backend_custom", "llm_backend")`.
+#' @export
+#'
+#' @examples
+#' my_scorer <- backend_custom(
+#'   fn = function(req) list(score = nchar(req$text) / 10),
+#'   name = "length_scorer",
+#'   version = "1.0"
+#' )
+#' texts <- tibble::tibble(
+#'   id = c("u1", "u2"),
+#'   text = c("Short note", "A slightly longer diary entry")
+#' )
+#' des <- coding_design(prompts = c(p1 = "{text}"), models = "local")
+#' code_texts(texts, "text", id_col = "id", design = des, backend = my_scorer)
+backend_custom <- function(fn,
+                           name = "custom",
+                           version = "1.0",
+                           metadata = list()) {
+  if (!is.function(fn)) {
+    cli::cli_abort("{.arg fn} must be an R function accepting a coding {.arg request} list.")
+  }
+  assert_scalar_character(name, "name")
+  assert_scalar_character(version, "version")
+  if (!is.list(metadata)) {
+    cli::cli_abort("{.arg metadata} must be a list.")
+  }
+
+  # Deterministic ID based on name + version + metadata (stable across R sessions)
+  id_hash <- digest::digest(list("custom", name, version, metadata), algo = "sha256")
+
+  structure(
+    list(
+      backend_type = "custom",
+      id = paste0("custom_", substr(id_hash, 1L, 12L)),
+      name = name,
+      version = version,
+      metadata = metadata,
+      fn = fn
+    ),
+    class = c("llm_backend_custom", "llm_backend")
+  )
+}
+
+#' @export
+backend_score.llm_backend_custom <- function(backend, request, ...) {
+  t0 <- proc.time()[["elapsed"]]
+  res <- backend$fn(request)
+
+  if (is.data.frame(res)) {
+    if (nrow(res) != 1L) {
+      cli::cli_abort("Custom backend {.val {backend$name}} returned a {nrow(res)}-row data.frame; expected exactly 1 row.")
+    }
+    content <- as.list(res[1L, , drop = FALSE])
+    model_out <- request$model %||% backend$name
+    raw_out <- res
+  } else if (is.list(res) && "content" %in% names(res)) {
+    content <- res$content
+    model_out <- res$model %||% request$model %||% backend$name
+    raw_out <- res$raw_response %||% res
+  } else if (is.character(res) && length(res) == 1L) {
+    content <- res
+    model_out <- request$model %||% backend$name
+    raw_out <- res
+  } else if (is.list(res)) {
+    content <- res
+    model_out <- request$model %||% backend$name
+    raw_out <- res
+  } else {
+    cli::cli_abort(
+      "Custom backend {.val {backend$name}} must return a JSON string, named list, 1-row data.frame, or list with {.field content}."
+    )
+  }
+
+  list(
+    content = content,
+    model = model_out,
+    latency_ms = (proc.time()[["elapsed"]] - t0) * 1000,
+    raw_response = raw_out
+  )
+}
+
 #' @export
 print.llm_backend <- function(x, ...) {
   cli::cli_h3("LLM Backend ({x$backend_type})")
@@ -708,6 +814,8 @@ print.llm_backend <- function(x, ...) {
     cli::cli_text(
       "Model: {x$model} | Endpoint: {x$base_url} | API key: {format(x$api_key)} | Timeout: {x$timeout}s"
     )
+  } else if (inherits(x, "llm_backend_custom")) {
+    cli::cli_text("Name: {x$name} | Version: {x$version}")
   } else {
     cli::cli_text("Model: {x$model} | Endpoint: {x$base_url} | Timeout: {x$timeout}s")
   }

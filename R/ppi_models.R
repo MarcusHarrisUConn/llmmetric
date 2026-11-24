@@ -1,11 +1,12 @@
-#' Prediction-Powered Mean Estimation (PPI / PPI++)
+#' Prediction-Powered Mean Estimation (PPI / PPI++ / Active IPW-PPI)
 #'
 #' Estimates the population mean \eqn{\theta^* = \mathbb{E}[Y]} by combining
 #' a human-validated sample (`truth_col` observed) with a larger LLM-coded
 #' unlabeled sample (`pred_col` only). Implements both standard PPI
-#' (`lambda = 1`) and power-tuned PPI++ (`lambda = "auto"`, minimizing
-#' asymptotic variance via the exact optimal control-variate weight), alongside
-#' human-only and naive-LLM benchmarks.
+#' (`lambda = 1`) and power-tuned PPI++ (`lambda = "auto"`), and supports
+#' Horvitz-Thompson inverse-probability-weighted (IPW) active/stratified
+#' validation designs via `weights` or `inclusion_prob` (e.g., produced by
+#' [select_validation_sample()]).
 #'
 #' @param data A `data.frame` (or `llm_coded_data`) containing `truth_col` and
 #'   `pred_col`. When `unlabeled = NULL`, rows with non-missing `truth_col`
@@ -21,6 +22,14 @@
 #' @param clip_lambda Logical; if `TRUE`, constrains auto-tuned `lambda` to
 #'   `[0, 1]`. Default `FALSE` (unconstrained optimal regression control variate
 #'   is always convex for mean estimation).
+#' @param weights Optional Horvitz-Thompson sampling weights \eqn{w_i > 0} for
+#'   stratified/active validation sampling: either a column name in `data` or a
+#'   numeric vector aligned with `data` (or the labeled subset). Mutually
+#'   exclusive with `inclusion_prob`.
+#' @param inclusion_prob Optional validation inclusion probabilities
+#'   \eqn{\pi_i \in (0, 1]} (converting to \eqn{w_i = 1 / \pi_i}): either a
+#'   column name in `data` or a numeric vector. Mutually exclusive with
+#'   `weights`.
 #'
 #' @return An S3 object of class `c("llm_ppi_mean", "llm_ppi")` containing
 #'   `$estimates`, `$benchmarks`, `$efficiency`, `$lambda`, `$vcov`, and S3
@@ -45,9 +54,30 @@ ppi_mean <- function(data,
                      unlabeled = NULL,
                      lambda = "auto",
                      conf_level = 0.95,
-                     clip_lambda = FALSE) {
+                     clip_lambda = FALSE,
+                     weights = NULL,
+                     inclusion_prob = NULL) {
   assert_scalar_numeric(conf_level, "conf_level", min = 0.5, max = 0.9999)
   assert_flag(clip_lambda, "clip_lambda")
+
+  if (!is.null(weights) && !is.null(inclusion_prob)) {
+    cli::cli_abort("Specify at most one of {.arg weights} or {.arg inclusion_prob}.")
+  }
+
+  # Handle weighted / IPW active-inference mode cleanly
+  if (!is.null(weights) || !is.null(inclusion_prob)) {
+    return(fit_ipw_ppi_mean(
+      data = data,
+      truth_col = truth_col,
+      pred_col = pred_col,
+      unlabeled = unlabeled,
+      lambda = lambda,
+      conf_level = conf_level,
+      clip_lambda = clip_lambda,
+      weights = weights,
+      inclusion_prob = inclusion_prob
+    ))
+  }
 
   sp <- prepare_ppi_data(data, truth_col = truth_col, pred_col = pred_col, unlabeled = unlabeled)
   y_lab <- as.numeric(sp$labeled[[truth_col]])
@@ -146,6 +176,12 @@ ppi_mean <- function(data,
 #'   names in `formula` to their LLM-coded surrogate column names (e.g.,
 #'   `c(distress = "llm_distress")` when an LLM codes a predictor on the RHS).
 #'   Automatically uses `method = "calibrated"` when RHS predictors are mapped.
+#' @param weights Optional Horvitz-Thompson sampling weights \eqn{w_i > 0} for
+#'   stratified/active validation sampling (column name in `data` or numeric
+#'   vector). Mutually exclusive with `inclusion_prob`.
+#' @param inclusion_prob Optional validation inclusion probabilities
+#'   \eqn{\pi_i \in (0, 1]} (column name in `data` or numeric vector, e.g.,
+#'   from [select_validation_sample()]). Mutually exclusive with `weights`.
 #'
 #' @return An S3 object of class `c("llm_ppi_lm", "llm_ppi")`.
 #' @export
@@ -170,16 +206,41 @@ ppi_lm <- function(formula,
                    method = c("ppi++", "ppi", "calibrated"),
                    lambda = NULL,
                    conf_level = 0.95,
-                   pred_map = NULL) {
+                   pred_map = NULL,
+                   weights = NULL,
+                   inclusion_prob = NULL) {
   if (!inherits(formula, "formula") || length(formula) != 3L) {
     cli::cli_abort("{.arg formula} must be a two-sided formula such as {.code y ~ x1 + x2}.")
   }
   method <- match.arg(method)
   assert_scalar_numeric(conf_level, "conf_level", min = 0.5, max = 0.9999)
+  if (!is.null(weights) && !is.null(inclusion_prob)) {
+    cli::cli_abort("Specify at most one of {.arg weights} or {.arg inclusion_prob}.")
+  }
 
   truth_col <- all.vars(formula[[2L]])
   if (length(truth_col) != 1L) {
     cli::cli_abort("Left-hand side of {.arg formula} must name a single outcome column.")
+  }
+
+  if (!is.null(weights) || !is.null(inclusion_prob)) {
+    if (is.null(pred_col)) {
+      cli::cli_abort("Supply {.arg pred_col} when using weighted / IPW-PPI in {.fn ppi_lm}.")
+    }
+    if (method == "calibrated") {
+      cli::cli_abort("Weighted IPW-PPI supports {.code method = \"ppi++\"} or {.code method = \"ppi\"}.")
+    }
+    return(fit_ipw_ppi_lm(
+      formula = formula,
+      data = data,
+      pred_col = pred_col,
+      unlabeled = unlabeled,
+      method = method,
+      lambda = lambda,
+      conf_level = conf_level,
+      weights = weights,
+      inclusion_prob = inclusion_prob
+    ))
   }
 
   # Handle predictor-side or multi-variable pred_map via control-variate calibration
@@ -639,6 +700,15 @@ print.llm_ppi <- function(x, ...) {
     cli::cli_text(
       "Random-intercept REML (human): tau2 = {fmt_num(vc_h$tau2_cluster)}, sigma2 = {fmt_num(vc_h$sigma2_resid)}, ICC = {fmt_num(vc_h$icc)} | Weighting: {x$weight_mode}"
     )
+  }
+  if (!is.null(x$calibration_diagnostics)) {
+    cd <- x$calibration_diagnostics
+    cli::cli_text(
+      "Cross-fitted calibration ({cd$calibrator}, {cd$folds}-fold, df={cd$df}): r {fmt_num(cd$r_raw)} -> {fmt_num(cd$r_calibrated_oof)} | RMSE {fmt_num(cd$rmse_raw)} -> {fmt_num(cd$rmse_calibrated_oof)}"
+    )
+  }
+  if (isTRUE(x$weighted)) {
+    cli::cli_text("IPW weighted active inference | Kish effective labeled n = {fmt_num(x$effective_n_weights, 1L)}")
   }
   disp <- tibble::tibble(
     term = x$estimates$term,

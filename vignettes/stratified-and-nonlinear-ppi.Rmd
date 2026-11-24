@@ -1,0 +1,261 @@
+---
+title: "Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
+)
+```
+
+## Beyond Simple Random Validation and Linear Calibration
+
+Standard Prediction-Powered Inference (`PPI` / `PPI++`) assumes that the human-validated subset is drawn by simple random sampling (SRS) and uses linear gradient rectifiers on the raw LLM predictions. In real applied studies, researchers routinely encounter three additional challenges:
+
+1. **Unequal-probability validation sampling (`select_validation_sample()` + IPW-PPI):** When a minority subgroup represents only 15% of a corpus—or when extreme scores matter most—researchers oversample rare strata to maximize Differential Prompt Functioning (DPF) power or Neyman precision. Passing exact inclusion probabilities $\pi_i$ or Horvitz-Thompson weights $w_i = 1/\pi_i$ to `ppi_mean()` and `ppi_lm()` activates exact Active / IPW-PPI++ estimation (Zrnic & Candès, 2024).
+2. **Non-linear LLM score distortion (`ppi_calibrated()`):** LLM ratings frequently suffer from floor/ceiling compression, S-curve saturation, or covariate-dependent non-linear distortion. `ppi_calibrated()` learns a $K$-fold cross-fitted natural spline, polynomial, logistic, or custom calibrator strictly out-of-fold before applying `PPI++`, preserving exact unbiasedness while slashing standard errors.
+3. **Offline and custom scoring pipelines (`backend_custom()`):** Many research teams run local open-weights models, institutional endpoints, or offline packages (such as `airgapllm`) rather than hosted APIs. `backend_custom()` wraps any R callable into `code_texts()` with zero added dependencies.
+
+```{r libs}
+library(llmmetric)
+```
+
+---
+
+## 1. Stratified & Neyman Validation Sampling (`select_validation_sample()`)
+
+Consider a corpus of $M = 1{,}500$ open-ended responses in which an underrepresented subgroup (`group = "minority"`, 15% of the corpus) has both a higher true distress mean and stronger predictor slope, while the LLM exhibits systematic downward bias and slope attenuation:
+
+```{r sim-corpus}
+set.seed(2026)
+M <- 1500
+group <- factor(
+  c(rep("majority", 1275), rep("minority", 225)),
+  levels = c("majority", "minority")
+)
+x <- rnorm(M)
+is_min <- as.numeric(group == "minority")
+
+# True outcome: mean differs sharply across groups and slope depends on x
+y_true <- 2.0 + 1.2 * x + 1.8 * is_min + rnorm(M, sd = 0.9)
+
+# Biased, attenuated LLM proxy with subgroup DPF
+y_llm <- 0.9 + 0.65 * y_true - 0.8 * is_min + 0.35 * x + rnorm(M, sd = 0.5)
+
+corpus <- tibble::tibble(
+  unit_id = sprintf("u%04d", seq_len(M)),
+  group = group,
+  x = x,
+  llm_score = y_llm,
+  true_y = y_true
+)
+```
+
+To ensure adequate statistical power for minority-group DPF auditing, we draw $n = 160$ human validation texts using **equal allocation** across the two subgroups (80 majority + 80 minority)—oversampling the minority stratum by nearly $6\times$:
+
+```{r sample-stratified}
+vs_equal <- select_validation_sample(
+  corpus,
+  n = 160,
+  strategy = "stratified",
+  strata_col = "group",
+  allocation = "equal",
+  seed = 101
+)
+vs_equal
+```
+
+Notice that the Horvitz-Thompson weights $w_i = 1 / \pi_i$ sum exactly to the corpus size $M = 1{,}500$:
+
+```{r check-ht-sum}
+sum(vs_equal$weights[vs_equal$selected])
+```
+
+When minimizing overall variance is the primary goal (rather than balanced subgroup DPF power), `strategy = "neyman"` allocates validation budget proportionally to $N_h \cdot \mathrm{SD}_h$ using the observed LLM scores:
+
+```{r sample-neyman}
+vs_neyman <- select_validation_sample(
+  corpus,
+  n = 160,
+  strategy = "neyman",
+  strata_col = "group",
+  score_col = "llm_score",
+  seed = 101
+)
+vs_neyman$stratum_summary
+```
+
+---
+
+## 2. Horvitz-Thompson Active / IPW-PPI (`ppi_mean()` & `ppi_lm()`)
+
+Now suppose human annotators code only the $n = 160$ units selected by `vs_equal`, leaving the remaining $N = 1{,}340$ units unlabeled (`NA`). Because `minority` rows are heavily oversampled in the validation set, an *unweighted* mean or regression over the labeled sample severely overstates the population mean! Supplying `inclusion_prob = "inclusion_prob"` (or `weights = "sampling_weight"`) activates exact Horvitz-Thompson Active IPW-PPI++:
+
+```{r fit-ipw}
+study_df <- vs_equal$data
+study_df$human_score <- ifelse(study_df$is_validation, study_df$true_y, NA_real_)
+
+# Population mean: compare true population mean vs unweighted vs IPW-PPI++
+true_pop_mean <- mean(corpus$true_y)
+fit_mean_unw <- ppi_mean(study_df, truth_col = "human_score", pred_col = "llm_score")
+fit_mean_ipw <- ppi_mean(
+  study_df,
+  truth_col = "human_score",
+  pred_col = "llm_score",
+  inclusion_prob = "inclusion_prob"
+)
+
+tibble::tibble(
+  estimator = c("True Population Mean", "Naive LLM", "Unweighted PPI++ (Biased)", "IPW-PPI++ (Valid)"),
+  estimate = c(
+    true_pop_mean,
+    fit_mean_ipw$benchmarks$estimate[fit_mean_ipw$benchmarks$method == "naive_llm"],
+    fit_mean_unw$estimates$estimate,
+    fit_mean_ipw$estimates$estimate
+  ),
+  std_error = c(
+    NA_real_,
+    fit_mean_ipw$benchmarks$std_error[fit_mean_ipw$benchmarks$method == "naive_llm"],
+    fit_mean_unw$estimates$std_error,
+    fit_mean_ipw$estimates$std_error
+  )
+)
+```
+
+The same Horvitz-Thompson weighting applies seamlessly to linear regression via `ppi_lm()`:
+
+```{r fit-ipw-lm}
+fit_lm_ipw <- ppi_lm(
+  human_score ~ x + group,
+  data = study_df,
+  pred_col = "llm_score",
+  inclusion_prob = "inclusion_prob"
+)
+fit_lm_ipw
+format_apa_table(fit_lm_ipw)
+```
+
+```{r plot-ipw-lm}
+autoplot(
+  fit_lm_ipw,
+  true_values = c("(Intercept)" = 2.0, x = 1.2, groupminority = 1.8)
+)
+```
+
+IPW-PPI++ accurately recovers the population intercept, predictor slope, and subgroup difference while shrinking confidence intervals substantially relative to IPW Human-Only estimation—and avoiding the dramatic bias of Naive LLM regression.
+
+---
+
+## 3. Cross-Fitted Non-Linear Calibration (`ppi_calibrated()`)
+
+Even under simple random validation sampling, raw LLM scores are often non-linearly distorted (for example, compressed into a narrow S-curve between 0 and 5 with covariate-dependent shift). Standard linear `PPI++` remains unbiased, but its variance reduction is limited by the *linear* correlation between $Y$ and $\hat{Y}$.
+
+`ppi_calibrated()` learns a non-linear mapping $\hat{m}(\hat{Y}, X) \approx Y$ via strict $K$-fold cross-fitting on the labeled subset (`splines::ns()`, polynomial, logistic, or a user-supplied learner) so that every labeled prediction is strictly out-of-fold and every unlabeled prediction uses the exact fold-weighted average of the $K$ models:
+
+```{r nonlinear-sim}
+set.seed(2027)
+M_nl <- 1200
+n_lab <- 160
+x_nl <- rnorm(M_nl)
+g_nl <- factor(sample(c("control", "treatment"), M_nl, replace = TRUE))
+y_nl <- 1.0 + 1.3 * x_nl + 0.7 * (g_nl == "treatment") + rnorm(M_nl, sd = 0.75)
+
+# Severe S-curve ceiling/floor compression + covariate shift
+llm_nl <- 5 * stats::plogis(1.5 * (y_nl - 1.2) + 0.6 * x_nl) + rnorm(M_nl, sd = 0.18)
+
+df_nl <- tibble::tibble(
+  x = x_nl,
+  group = g_nl,
+  human_y = c(y_nl[seq_len(n_lab)], rep(NA_real_, M_nl - n_lab)),
+  llm_y = llm_nl
+)
+
+fit_cal <- ppi_calibrated(
+  human_y ~ x + group,
+  data = df_nl,
+  pred_col = "llm_y",
+  calibrator = "spline",
+  df = 4L,
+  folds = 5L,
+  seed = 2027
+)
+fit_cal
+```
+
+Notice how out-of-fold spline calibration dramatically boosts human-LLM correlation (`r_raw` to `r_calibrated_oof`) and cuts prediction RMSE, translating directly into tighter, provably valid confidence intervals compared to both Human-Only and uncalibrated `PPI++`:
+
+```{r nonlinear-table-plot}
+format_apa_table(fit_cal, include_intercept = FALSE)
+autoplot(fit_cal, true_values = c(x = 1.3, grouptreatment = 0.7))
+```
+
+Researchers can also supply a completely custom calibration learner via `calibrator = function(train_df, new_df, truth_col, pred_col, rhs_vars) { ... }` (for instance, wrapping a random forest, GAM, or gradient-boosted tree from another package).
+
+---
+
+## 4. Integrating Local & Offline Models via `backend_custom()`
+
+When your workflow uses a local open-weights LLM, an institutional Python/C++ runner, or an air-gapped R package (such as `airgapllm`), `backend_custom()` adapts any R function `fn(request)` directly into `code_texts()`—giving you full JSON schema validation, retry handling, content-addressed disk caching, resumable checkpointing, and direct entry into `g_study()`, `dpf_test()`, and `ppi_lm()` with zero added dependencies:
+
+```{r custom-backend}
+# Wrap any local scorer into an llmmetric backend
+local_scorer <- backend_custom(
+  fn = function(req) {
+    # Inspect req$text, req$prompt_id, req$model, req$temperature, req$schema
+    base_val <- 2.5 + 0.08 * nchar(req$text)
+    prompt_shift <- if (identical(req$prompt_id, "rubric_v2")) 0.35 else 0.0
+    list(score = min(max(round(base_val + prompt_shift, 2), 1), 7))
+  },
+  name = "local_airgap_scorer",
+  version = "1.0"
+)
+local_scorer
+
+sample_texts <- tibble::tibble(
+  unit_id = paste0("doc_", 1:6),
+  text = c(
+    "Calm morning walk.",
+    "Feeling tense before the clinic review.",
+    "Overwhelmed by back-to-back deadlines and poor sleep.",
+    "Peaceful afternoon reading outside.",
+    "Anxious about upcoming travel and family obligations.",
+    "Steady focus throughout the workday."
+  )
+)
+
+design <- coding_design(
+  prompts = c(
+    rubric_v1 = "Rate distress 1-7: {text}",
+    rubric_v2 = "Score emotional strain 1-7: {text}"
+  ),
+  models = "local-8b"
+)
+
+coded <- code_texts(
+  data = sample_texts,
+  text_col = "text",
+  id_col = "unit_id",
+  design = design,
+  backend = local_scorer,
+  cache = coding_cache("memory")
+)
+coded$data[, c("unit_id", "prompt", "model", "score", "cache_hit")]
+```
+
+The resulting `llm_coded_data` object flows directly into `g_study()`, `d_study()`, `calibration_metrics()`, `dpf_test()`, and `ppi_lm()`.
+
+---
+
+## References
+
+- Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T. (2023). Prediction-powered inference. *Science*, 382(6671), 669--674.
+- Angelopoulos, A. N., Duchi, J. C., & Zrnic, T. (2024). PPI++: Efficient prediction-powered inference. *arXiv:2311.01453*.
+- Zrnic, T., & Candès, E. J. (2024). Active statistical inference. *Proceedings of the 41st International Conference on Machine Learning (ICML)*.

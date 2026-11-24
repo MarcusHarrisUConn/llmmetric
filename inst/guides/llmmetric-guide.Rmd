@@ -2,7 +2,7 @@
 title: "llmmetric Methods Guide"
 subtitle: "Psychometric Reliability, Measurement Invariance, and Prediction-Powered Inference for LLM-Coded Research Data"
 author: "Marcus Harris"
-date: "Version 0.3.0 (2026)"
+date: "Version 0.4.0 (2026)"
 output:
   pdf_document:
     toc: true
@@ -32,10 +32,10 @@ Researchers across psychology, education, sociology, management, and health scie
 
 `llmmetric` operationalizes a formal four-stage psychometric validity framework:
 
-1. **Multi-Facet Structured Coding Engine** (`coding_schema()`, `coding_design()`, `code_texts()`, `coding_cache()`, `backend_openai()`, `backend_ollama()`, `backend_mock()`): reproducible crossed `unit x prompt x model x temperature x replicate` orchestration with strict JSON validation, resumable atomic checkpointing, and integrity-checked disk caching.
+1. **Multi-Facet Structured Coding Engine** (`coding_schema()`, `coding_design()`, `code_texts()`, `coding_cache()`, `backend_openai()`, `backend_ollama()`, `backend_custom()`, `backend_mock()`): reproducible crossed `unit x prompt x model x temperature x replicate` orchestration with strict JSON validation, resumable atomic checkpointing, integrity-checked disk caching, and zero-dependency custom R callable adapters.
 2. **LLM Psychometrics & Generalizability Suite** (`g_study()`, `d_study()`, `calibration_metrics()`, `human_irr()`, `check_drift()`): Generalizability Theory variance decomposition, D-study reliability projections, calibration curves against human gold standards and inter-rater reliability ceilings, and temporal drift testing.
 3. **Differential Prompt Functioning (DPF)** (`dpf_test()`): uniform and non-uniform measurement invariance tests across observed subgroups with unit-clustered sandwich inference, per-prompt FDR screening, and `prompt x group` interaction tests.
-4. **Error-Corrected Downstream Inference & Study Planning** (`ppi_mean()`, `ppi_proportion()`, `ppi_lm()`, `ppi_glm()`, `ppi_clustered()`, `ppi_lmer()`, `ppi_sample_size()`, `ppi_power()`, `format_apa_table()`): Prediction-Powered Inference (`PPI` / `PPI++`) for provably valid confidence intervals and hypothesis tests.
+4. **Error-Corrected Downstream Inference & Study Planning** (`select_validation_sample()`, `ppi_mean()`, `ppi_proportion()`, `ppi_lm()`, `ppi_glm()`, `ppi_calibrated()`, `ppi_clustered()`, `ppi_lmer()`, `ppi_sample_size()`, `ppi_power()`, `format_apa_table()`): Prediction-Powered Inference (`PPI` / `PPI++`), active Horvitz-Thompson IPW-PPI, cross-fitted non-linear calibration, and multilevel extensions for provably valid confidence intervals and hypothesis tests.
 
 # Generalizability Theory for Multi-Facet LLM Coding
 
@@ -131,6 +131,38 @@ fit_ml$estimates[, c("term", "estimate", "std_error", "conf_low", "conf_high", "
 autoplot(fit_ml, true_values = c(x = 1.1, groupgroup_b = 0.5))
 ```
 
+## Active / Stratified Horvitz-Thompson IPW-PPI
+
+When human annotators validate an unequal-probability stratified, Neyman-allocated, or quantile-stratified subset drawn via `select_validation_sample()` with positive inclusion probabilities $\pi_i \in (0, 1]$ and Horvitz-Thompson weights $w_i = 1 / \pi_i$ (Hajek-normalized so $\sum_{i \in \mathcal{L}} w_i = M$), `ppi_mean()` and `ppi_lm()` solve the active IPW-PPI++ estimating equations (Zrnic & Cand\`es, 2024) over all $M = n + N$ corpus units with observation-level influence score:
+
+$$
+\phi_i(\theta; \lambda) =
+  \lambda \tilde{g}_i(\theta)
+  + R_i w_i \big(g_i(\theta) - \lambda \tilde{g}_i(\theta)\big),
+  \qquad R_i = \mathbb{I}(i \in \mathcal{L}).
+$$
+
+Setting $a_i = R_i w_i g_i$ and $b_i = (1 - R_i w_i)\tilde{g}_i$, the variance-minimizing tuning weight is $\hat{\lambda}^*_{\text{IPW}} = -\mathrm{tr}(\hat{H}^{-1}\widehat{\mathrm{Cov}}(a, b)\hat{H}^{-1}) / \mathrm{tr}(\hat{H}^{-1}\widehat{\mathrm{Cov}}(b)\hat{H}^{-1})$ with IPW sandwich variance $\frac{1}{M}\hat{H}_\lambda^{-1}\widehat{\mathrm{Cov}}(\phi)\hat{H}_\lambda^{-1}$.
+
+## Cross-Fitted Non-Linear Calibration (`ppi_calibrated()`)
+
+When LLM ratings exhibit severe non-linear distortion (S-curve saturation, ceiling/floor compression, or covariate-specific non-linear bias), `ppi_calibrated()` partitions the labeled subset $\mathcal{L}$ into $K$ folds $\mathcal{I}_1, \dots, \mathcal{I}_K$, fits a flexible calibrator $\hat{m}^{(-k)}(\hat{Y}, X) \approx Y$ (natural cubic spline `splines::ns()`, polynomial, logistic, or custom learner) strictly excluding fold $k$, assigns out-of-fold predictions $\hat{m}^{(-k)}(\hat{Y}_i, X_i)$ to $i \in \mathcal{I}_k$, and assigns the fold-weighted average $\sum_{k=1}^K \frac{n_k}{n}\hat{m}^{(-k)}(\hat{Y}_j^u, X_j^u)$ to each unlabeled observation $j \in \mathcal{U}$. By linearity of canonical-link GLM scores in $Y$, each fold rectifier satisfies $\mathbb{E}[\text{rectifier}_k \mid \mathcal{L} \setminus \mathcal{I}_k] = \mathbf{0}$, preserving exact asymptotic unbiasedness and nominal 95\% CI coverage while sharply reducing variance.
+
+```{r guide-calibrated}
+set.seed(42)
+n_tot <- 600
+x_nl <- rnorm(n_tot)
+y_nl <- 1.0 + 1.2 * x_nl + rnorm(n_tot, sd = 0.8)
+llm_nl <- 5 * stats::plogis(1.5 * (y_nl - 1.0) + 0.5 * x_nl) + rnorm(n_tot, sd = 0.15)
+df_nl <- tibble::tibble(
+  x = x_nl,
+  human_y = c(y_nl[1:120], rep(NA_real_, n_tot - 120)),
+  llm_y = llm_nl
+)
+fit_cal <- ppi_calibrated(human_y ~ x, data = df_nl, pred_col = "llm_y")
+fit_cal$calibration_diagnostics[, c("r_raw", "r_calibrated_oof", "rmse_raw", "rmse_calibrated_oof")]
+```
+
 # Validation Sample-Size and Power Planning
 
 Under optimal PPI++ tuning with single-observation human SD constant $\sigma = \mathrm{SE}_{\text{human}}\sqrt{n_0}$ and human-LLM score correlation $r$, asymptotic variance satisfies:
@@ -160,4 +192,5 @@ ppi_sample_size(target_se = 0.06, n_total = 2000, pilot = fit_ml, term = "x")
 - Angelopoulos, A. N., Bates, S., Fannjiang, C., Jordan, M. I., & Zrnic, T. (2023). Prediction-powered inference. *Science*, 382(6671), 669--674.
 - Angelopoulos, A. N., Duchi, J. C., & Zrnic, T. (2024). PPI++: Efficient prediction-powered inference. *arXiv:2311.01453*.
 - Brennan, R. L. (2001). *Generalizability Theory*. Springer.
+- Zrnic, T., & Cand\`es, E. J. (2024). Active statistical inference. *Proceedings of the 41st International Conference on Machine Learning (ICML)*.
 - Zumbo, B. D. (1999). *A Handbook on the Theory and Methods of Differential Item Functioning (DIF)*. Ottawa: Department of National Defense.

@@ -304,7 +304,9 @@ vcov_cluster_fit <- function(fit, cluster) {
   S <- rowsum(U, group = cl, reorder = FALSE)
   adj <- (G / (G - 1)) * ((n - 1) / max(n - p, 1))
   meat <- adj * crossprod(S)
-  bread %*% meat %*% bread
+  V <- bread %*% meat %*% bread
+  dimnames(V) <- list(colnames(X), colnames(X))
+  V
 }
 
 #' Compute Wald chi-square test for a subset of coefficients using given vcov
@@ -389,7 +391,7 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
     t_terms <- if (poly_degree == 1L) {
       "t_c"
     } else {
-      paste0("I(t_c^", seq_len(poly_degree), ")", collapse = " + ")
+      paste(c("t_c", paste0("I(t_c^", seq.int(2L, poly_degree), ")")), collapse = " + ")
     }
     fml0 <- stats::as.formula(paste("y ~", t_terms))
     fml1 <- stats::as.formula(paste("y ~", t_terms, "+ group"))
@@ -561,6 +563,17 @@ fit_dpf_core <- function(y, truth, group, cluster, family, poly_degree, alpha) {
 #' Test Prompt x Group interaction controlling for human truth
 #' @noRd
 fit_prompt_group_interaction <- function(y, truth, group, prompt, cluster, family, alpha) {
+  if (is_constant_numeric(y)) {
+    return(tibble::tibble(
+      test = "prompt_x_group",
+      stat_type = if (family == "gaussian") "F" else "LRT_Chisq",
+      statistic = NA_real_,
+      df = (nlevels(group) - 1) * (nlevels(prompt) - 1),
+      p_value = NA_real_,
+      delta_r2 = 0,
+      flagged = FALSE
+    ))
+  }
   work <- data.frame(y = y, t_c = truth - mean(truth), group = group, prompt = prompt)
   if (family == "gaussian") {
     m_add <- stats::lm(y ~ t_c + group + prompt, data = work)

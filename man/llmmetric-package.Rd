@@ -12,20 +12,23 @@ orchestration with resumable checkpointing and hardened caching,
 Generalizability Theory (G-study and D-study), calibration against human
 gold standards and inter-rater reliability ceilings, temporal drift
 monitoring, Differential Prompt Functioning (DPF) invariance tests,
-Prediction-Powered Inference (PPI, PPI++, prevalence proportions, and
-clustered/multilevel extensions), validation sample-size/power planning,
-APA reporting tables, and publication-ready \code{ggplot2::autoplot()}
-diagnostics.
+Prediction-Powered Inference (PPI, PPI++, Horvitz-Thompson IPW-PPI,
+cross-fitted non-linear calibration, prevalence proportions, and
+clustered/multilevel extensions), stratified validation sampling,
+validation sample-size/power planning, APA reporting tables, and
+publication-ready \code{ggplot2::autoplot()} diagnostics.
 }
 \seealso{
 Key workflow entry points:
 \itemize{
 \item Multi-facet coding: \code{\link[=coding_schema]{coding_schema()}}, \code{\link[=coding_design]{coding_design()}}, \code{\link[=code_texts]{code_texts()}},
-\code{\link[=coding_cache]{coding_cache()}}, \code{\link[=backend_openai]{backend_openai()}}, \code{\link[=backend_ollama]{backend_ollama()}}, \code{\link[=backend_mock]{backend_mock()}}
+\code{\link[=coding_cache]{coding_cache()}}, \code{\link[=backend_openai]{backend_openai()}}, \code{\link[=backend_ollama]{backend_ollama()}},
+\code{\link[=backend_custom]{backend_custom()}}, \code{\link[=backend_mock]{backend_mock()}}
 \item Psychometrics & fairness: \code{\link[=g_study]{g_study()}}, \code{\link[=d_study]{d_study()}}, \code{\link[=calibration_metrics]{calibration_metrics()}},
 \code{\link[=human_irr]{human_irr()}}, \code{\link[=check_drift]{check_drift()}}, \code{\link[=dpf_test]{dpf_test()}}
-\item Error-corrected inference & planning: \code{\link[=ppi_mean]{ppi_mean()}}, \code{\link[=ppi_proportion]{ppi_proportion()}},
-\code{\link[=ppi_lm]{ppi_lm()}}, \code{\link[=ppi_glm]{ppi_glm()}}, \code{\link[=ppi_clustered]{ppi_clustered()}}, \code{\link[=ppi_lmer]{ppi_lmer()}},
+\item Error-corrected inference & planning: \code{\link[=select_validation_sample]{select_validation_sample()}},
+\code{\link[=ppi_mean]{ppi_mean()}}, \code{\link[=ppi_proportion]{ppi_proportion()}}, \code{\link[=ppi_lm]{ppi_lm()}}, \code{\link[=ppi_glm]{ppi_glm()}},
+\code{\link[=ppi_calibrated]{ppi_calibrated()}}, \code{\link[=ppi_clustered]{ppi_clustered()}}, \code{\link[=ppi_lmer]{ppi_lmer()}},
 \code{\link[=ppi_sample_size]{ppi_sample_size()}}, \code{\link[=ppi_power]{ppi_power()}}, \code{\link[=format_apa_table]{format_apa_table()}}
 }
 }

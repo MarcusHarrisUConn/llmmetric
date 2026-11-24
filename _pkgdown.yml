@@ -47,6 +47,7 @@ reference:
       - backend_mock
       - backend_openai
       - backend_ollama
+      - backend_custom
 
   - title: LLM Psychometrics & Generalizability
     desc: Generalizability Theory variance decomposition, Decision Studies, calibration against human gold standards, human ceilings, and drift monitoring.
@@ -63,18 +64,20 @@ reference:
       - dpf_test
 
   - title: Prediction-Powered Inference & Multilevel Extensions
-    desc: Error-corrected estimators combining human validation subsets with large LLM-coded corpora.
+    desc: Error-corrected estimators combining human validation subsets with large LLM-coded corpora, including Horvitz-Thompson active IPW-PPI and cross-fitted non-linear calibration.
     contents:
       - ppi_mean
       - ppi_proportion
       - ppi_lm
       - ppi_glm
+      - ppi_calibrated
       - ppi_clustered
       - ppi_lmer
 
-  - title: Study Planning & APA Reporting
-    desc: Validation sample-size planning, power curves, and publication-ready APA 7th-edition tables.
+  - title: Study Planning, Sampling & APA Reporting
+    desc: Stratified validation sampling, sample-size/power planning, and publication-ready APA 7th-edition tables.
     contents:
+      - select_validation_sample
       - ppi_sample_size
       - ppi_power
       - format_apa_table
@@ -106,3 +109,4 @@ articles:
       - ppi-coverage-proof
       - dpf-and-fairness
       - designing-validation-studies
+      - stratified-and-nonlinear-ppi

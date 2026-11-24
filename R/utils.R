@@ -34,6 +34,7 @@ with_local_seed <- function(seed, expr) {
 #' @noRd
 safe_solve <- function(A, b = NULL, tol = 1e-10) {
   A <- as.matrix(A)
+  dn <- dimnames(A)
   res <- tryCatch(
     if (is.null(b)) solve(A) else solve(A, b),
     error = function(e) NULL
@@ -44,6 +45,9 @@ safe_solve <- function(A, b = NULL, tol = 1e-10) {
   sv <- svd(A)
   d_inv <- ifelse(sv$d > max(sv$d, 0) * tol, 1 / sv$d, 0)
   pinv <- sv$v %*% (d_inv * t(sv$u))
+  if (!is.null(dn)) {
+    dimnames(pinv) <- list(dn[[2L]], dn[[1L]])
+  }
   if (is.null(b)) pinv else pinv %*% b
 }
 

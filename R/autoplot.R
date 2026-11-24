@@ -562,19 +562,31 @@ autoplot.llm_ppi <- function(object,
   }
 
   primary_method <- object$method
-  method_levels <- c(primary_method, "human_only", "naive_llm")
-  pretty_labels <- stats::setNames(
-    c(toupper(primary_method), "Human-Only", "Naive LLM"),
-    method_levels
-  )
+  has_uncal <- "ppi++_uncalibrated" %in% b$method
+  if (has_uncal) {
+    method_levels <- c(primary_method, "ppi++_uncalibrated", "human_only", "naive_llm")
+    pretty_labels <- stats::setNames(
+      c("PPI++ (Calibrated)", "PPI++ (Uncalibrated)", "Human-Only", "Naive LLM"),
+      method_levels
+    )
+    col_map <- stats::setNames(
+      c(unname(pal["teal"]), unname(pal["sky"]), unname(pal["blue"]), unname(pal["orange"])),
+      unname(pretty_labels)
+    )
+  } else {
+    method_levels <- c(primary_method, "human_only", "naive_llm")
+    pretty_labels <- stats::setNames(
+      c(toupper(primary_method), "Human-Only", "Naive LLM"),
+      method_levels
+    )
+    col_map <- stats::setNames(
+      c(unname(pal["teal"]), unname(pal["blue"]), unname(pal["orange"])),
+      unname(pretty_labels)
+    )
+  }
 
   b$method_f <- factor(pretty_labels[b$method], levels = rev(unname(pretty_labels)))
   b$term_f <- factor(b$term, levels = unique(b$term))
-
-  col_map <- stats::setNames(
-    c(unname(pal["teal"]), unname(pal["blue"]), unname(pal["orange"])),
-    unname(pretty_labels)
-  )
 
   lam_txt <- if (length(object$lambda) == 1L) {
     fmt_num(object$lambda, 2L)

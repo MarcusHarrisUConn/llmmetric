@@ -12,7 +12,9 @@ ppi_lm(
   method = c("ppi++", "ppi", "calibrated"),
   lambda = NULL,
   conf_level = 0.95,
-  pred_map = NULL
+  pred_map = NULL,
+  weights = NULL,
+  inclusion_prob = NULL
 )
 }
 \arguments{
@@ -39,6 +41,14 @@ parameter (for \code{"ppi++"} or \code{"ppi"}).}
 names in \code{formula} to their LLM-coded surrogate column names (e.g.,
 \code{c(distress = "llm_distress")} when an LLM codes a predictor on the RHS).
 Automatically uses \code{method = "calibrated"} when RHS predictors are mapped.}
+
+\item{weights}{Optional Horvitz-Thompson sampling weights \eqn{w_i > 0} for
+stratified/active validation sampling (column name in \code{data} or numeric
+vector). Mutually exclusive with \code{inclusion_prob}.}
+
+\item{inclusion_prob}{Optional validation inclusion probabilities
+\eqn{\pi_i \in (0, 1]} (column name in \code{data} or numeric vector, e.g.,
+from \code{\link[=select_validation_sample]{select_validation_sample()}}). Mutually exclusive with \code{weights}.}
 }
 \value{
 An S3 object of class \code{c("llm_ppi_lm", "llm_ppi")}.
