@@ -1,11 +1,13 @@
-# Prediction-Powered Mean Estimation (PPI / PPI++)
+# Prediction-Powered Mean Estimation (PPI / PPI++ / Active IPW-PPI)
 
 Estimates the population mean \\\theta^\* = \mathbb{E}\[Y\]\\ by
 combining a human-validated sample (`truth_col` observed) with a larger
 LLM-coded unlabeled sample (`pred_col` only). Implements both standard
-PPI (`lambda = 1`) and power-tuned PPI++ (`lambda = "auto"`, minimizing
-asymptotic variance via the exact optimal control-variate weight),
-alongside human-only and naive-LLM benchmarks.
+PPI (`lambda = 1`) and power-tuned PPI++ (`lambda = "auto"`), and
+supports Horvitz-Thompson inverse-probability-weighted (IPW)
+active/stratified validation designs via `weights` or `inclusion_prob`
+(e.g., produced by
+[`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md)).
 
 ## Usage
 
@@ -17,7 +19,9 @@ ppi_mean(
   unlabeled = NULL,
   lambda = "auto",
   conf_level = 0.95,
-  clip_lambda = FALSE
+  clip_lambda = FALSE,
+  weights = NULL,
+  inclusion_prob = NULL
 )
 ```
 
@@ -57,6 +61,19 @@ ppi_mean(
   Logical; if `TRUE`, constrains auto-tuned `lambda` to `[0, 1]`.
   Default `FALSE` (unconstrained optimal regression control variate is
   always convex for mean estimation).
+
+- weights:
+
+  Optional Horvitz-Thompson sampling weights \\w_i \> 0\\ for
+  stratified/active validation sampling: either a column name in `data`
+  or a numeric vector aligned with `data` (or the labeled subset).
+  Mutually exclusive with `inclusion_prob`.
+
+- inclusion_prob:
+
+  Optional validation inclusion probabilities \\\pi_i \in (0, 1\]\\
+  (converting to \\w_i = 1 / \pi_i\\): either a column name in `data` or
+  a numeric vector. Mutually exclusive with `weights`.
 
 ## Value
 

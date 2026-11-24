@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -25,6 +25,7 @@
     <li><a class="dropdown-item" href="../articles/ppi-coverage-proof.html">Monte Carlo Coverage Proof: PPI / PPI++ vs. Naive LLM Regressions</a></li>
     <li><a class="dropdown-item" href="../articles/dpf-and-fairness.html">Differential Prompt Functioning (DPF), Fairness, and Human Ceiling Benchmarks</a></li>
     <li><a class="dropdown-item" href="../articles/designing-validation-studies.html">Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting</a></li>
+    <li><a class="dropdown-item" href="../articles/stratified-and-nonlinear-ppi.html">Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends</a></li>
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-pdfs" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">PDFs</button>
@@ -47,6 +48,69 @@
       <small>Source: <a href="https://github.com/MarcusHarrisUConn/llmmetric/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.5.0" id="llmmetric-050">llmmetric 0.5.0<a class="anchor" aria-label="anchor" href="#llmmetric-050"></a></h2>
+<div class="section level3">
+<h3 id="security-hardening-independent-peer-red-team-audit-remediation-0-5-0">Security Hardening (Independent Peer Red-Team Audit Remediation)<a class="anchor" aria-label="anchor" href="#security-hardening-independent-peer-red-team-audit-remediation-0-5-0"></a></h3>
+<ul><li>
+<strong>Eliminated <code>cli</code> Glue Injection / RCE &amp; Secret Exfiltration (<code><a href="../reference/backend_openai.html">backend_openai()</a></code>, <code><a href="../reference/backend_ollama.html">backend_ollama()</a></code>):</strong> Replaced dynamic <code><a href="https://rdrr.io/r/base/paste.html" class="external-link">paste0()</a></code> error strings passed into <code><a href="https://cli.r-lib.org/reference/cli_abort.html" class="external-link">cli::cli_abort()</a></code> with safe variable interpolation (<code>"{safe_msg}"</code>), eliminating arbitrary <code>{...}</code> glue execution and API-key exfiltration from adversarial HTTP/transport error bodies.</li>
+<li>
+<strong>Single-Pass Prompt Template Rendering (<code>render_prompt_template()</code>):</strong> Rewrote template substitution to scan placeholders exclusively in the original template string in a single pass, preventing untrusted text containing <code>{ssn}</code>, <code>{patient_name}</code>, or <code>{human_score}</code> from triggering second-order substitution of adjacent data-frame columns.</li>
+<li>
+<strong>Sealed Custom HTTP Headers (<code>backend_openai(extra_headers = ...)</code>):</strong> All <code>extra_headers</code> values are now stored inside the non-serialized session secret vault (<code>llm_redacted_secret</code>) and scrubbed from error messages alongside <code>api_key</code>.</li>
+<li>
+<strong>Disk Cache &amp; Checkpoint Hardening (<code>resolve_safe_cache_path()</code>, <code><a href="../reference/cache_operations.html">cache_set()</a></code>, <code><a href="../reference/code_texts.html">code_texts()</a></code>):</strong> Blocked symlink escapes in disk cache directories/entries and checkpoint files, enforced <code>0600</code> owner-only permissions on written cache/checkpoint files, ensured <code>keep_raw = FALSE</code> omits raw model outputs from persisted disk caches and checkpoints, rejected directory paths as <code>checkpoint_file</code>, and verified atomic write success.</li>
+<li>
+<strong>Markdown/HTML &amp; LaTeX Escaping (<code><a href="../reference/format_apa_table.html">format_apa_table()</a></code>):</strong> Escaped <code>|</code>, <code>&lt;</code>, <code>&gt;</code>, and newlines in Markdown tables (preventing column breakouts and raw HTML/XSS injection) and escaped <code>{</code>, <code>}</code>, <code>~</code>, <code>\</code>, and newlines cleanly in LaTeX tables.</li>
+<li>
+<strong>Strict Untrusted JSON &amp; IPv6 URL Validation (<code>extract_json_payload()</code>, <code>validate_endpoint_url()</code>):</strong> Rejected multi-object payloads inside raw or fenced responses, prevented unmatched prose double quotes from breaking balanced JSON extraction, filtered <code>\x7f</code> DEL bytes, and enforced <code>[1, 65535]</code> port range validation on bracketed IPv6 hosts.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="statistical-accuracy-boundary-guards--interop-improvements-0-5-0">Statistical Accuracy, Boundary Guards &amp; Interop Improvements<a class="anchor" aria-label="anchor" href="#statistical-accuracy-boundary-guards--interop-improvements-0-5-0"></a></h3>
+<ul><li>
+<strong>Cross-Fitted Non-Linear Calibration (<code><a href="../reference/ppi_calibrated.html">ppi_calibrated()</a></code>):</strong> Replaced internal model-frame names with collision-proof identifiers (fixing overwrites when covariates are named <code>y</code> or <code>b_1</code>, and supporting non-syntactic column names), eliminated held-out <code>val_df</code> leakage into unlabeled predictions by determining active fold covariates strictly from training folds, and added upfront domain validation for <code>calibrator = "logistic"</code> and canonical GLM families.</li>
+<li>
+<strong>Horvitz-Thompson Positivity &amp; Effective Sample Size (<code><a href="../reference/select_validation_sample.html">select_validation_sample()</a></code>, <code><a href="../reference/ppi_mean.html">ppi_mean()</a></code>, <code><a href="../reference/ppi_lm.html">ppi_lm()</a></code>):</strong> Enforced <code>n &gt;= H</code> positivity in stratified sampling (preventing <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>π</mi><mi>i</mi></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\pi_i = 0</annotation></semantics></math> and <code>Inf</code> weights), rejected non-finite/zero weights across all corpus rows in IPW-PPI, and enforced Kish effective sample-size checks (<code>n_eff &gt;= 2</code> / <code>n_eff &gt; p</code>) with effective-df <code>t</code> inference to prevent zero-SE collapse under extreme weights.</li>
+<li>
+<strong>Numeric Ordinal Ordering &amp; IRR Guards (<code><a href="../reference/human_irr.html">human_irr()</a></code>, <code><a href="../reference/calibration_metrics.html">calibration_metrics()</a></code>):</strong> Fixed lexicographic sorting on numeric ordinal scales (e.g., <code>1:10</code> now sorts numerically rather than <code>"1", "10", "2", ...</code>), validated <code>&gt;= 2</code> distinct active non-NA raters after <code>na.rm</code> filtering, and required <code>&gt;= 2</code> overlapping multi-rated units in continuous <code><a href="../reference/human_irr.html">human_irr()</a></code>.</li>
+<li>
+<strong>Proportion PPI &amp; <code><a href="https://rdrr.io/r/stats/confint.html" class="external-link">confint()</a></code> Parity (<code><a href="../reference/ppi_proportion.html">ppi_proportion()</a></code>):</strong> Prevented inverted clamped CIs (<code>pmin(pmax(..., 0), 1)</code> on both endpoints), validated continuous probability inputs in <code>[0, 1]</code>, and added <code>confint.llm_ppi_proportion()</code> honoring <code>simultaneous</code> and <code>clamp_ci</code>.</li>
+<li>
+<strong>Calibrated <code>pred_map</code> Alignment &amp; GLM Domain Checks (<code><a href="../reference/ppi_lm.html">ppi_lm()</a></code>, <code><a href="../reference/ppi_glm.html">ppi_glm()</a></code>):</strong> Jointly harmonized categorical factor levels across human labeled, surrogate labeled, and surrogate unlabeled splits by exact column name, and enforced <code>[0, 1]</code> (<code><a href="https://rdrr.io/r/stats/family.html" class="external-link">binomial()</a></code>) and <code>&gt;= 0</code> (<code><a href="https://rdrr.io/r/stats/family.html" class="external-link">poisson()</a></code>) domain constraints.</li>
+<li>
+<strong>Clustered &amp; Multilevel Inference (<code><a href="../reference/ppi_clustered.html">ppi_clustered()</a></code>, <code><a href="../reference/ppi_lmer.html">ppi_lmer()</a></code>):</strong> Enforced <code>n &gt; p</code>, aligned overlapping-cluster CR1 scaling and Welch-Satterthwaite effective cluster degrees of freedom (so <code>lambda = 0</code> matches <code>human_only</code> identically), and explicitly rejected unsupported multiple random-effect or random-slope formulas in <code><a href="../reference/ppi_lmer.html">ppi_lmer()</a></code>.</li>
+<li>
+<strong>Schema, Drift, D-Study &amp; Cross-Package Interop (<code><a href="../reference/validate_coded_output.html">validate_coded_output()</a></code>, <code><a href="../reference/check_drift.html">check_drift()</a></code>, <code><a href="../reference/d_study.html">d_study()</a></code>, <code><a href="../reference/g_study.html">g_study()</a></code>, <code><a href="../reference/backend_custom.html">backend_custom()</a></code>):</strong> Accepted <code>NA_character_</code> on <code>nullable = TRUE</code> fields and native R <code>factor</code> values under default <code>coerce = FALSE</code>; added upfront <code>na.rm = FALSE</code> error in <code><a href="../reference/check_drift.html">check_drift()</a></code> and <code><a href="https://rdrr.io/r/base/is.finite.html" class="external-link">is.finite()</a></code> checks on <code><a href="../reference/d_study.html">d_study()</a></code> <code>grid</code>/<code>costs</code>; expanded <code>g_study(facets = NULL)</code> auto-detection to include <code>prompt_id</code>, <code>seed</code>, and <code>pass_id</code> (seamless <code>airgapllm::consensus_passes()</code> interop); and stripped dot-prefixed metadata columns from 1-row data frames returned by <code><a href="../reference/backend_custom.html">backend_custom()</a></code>.</li>
+</ul><hr></div>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.4.0" id="llmmetric-040">llmmetric 0.4.0<a class="anchor" aria-label="anchor" href="#llmmetric-040"></a></h2>
+<div class="section level3">
+<h3 id="new-features-0-4-0">New Features<a class="anchor" aria-label="anchor" href="#new-features-0-4-0"></a></h3>
+<ul><li>
+<strong>Stratified &amp; Active Validation Sampling (<code><a href="../reference/select_validation_sample.html">select_validation_sample()</a></code>):</strong> Draws reproducible human-validation subsets under simple random (<code>"simple"</code>), subgroup-stratified (<code>"stratified"</code> with <code>"proportional"</code>, <code>"equal"</code>, or <code>"neyman"</code> allocation), score-based Neyman (<code>"neyman"</code>), score-quantile (<code>"quantile"</code>), and whole-cluster (<code>"cluster"</code>) designs, returning exact inclusion probabilities <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>π</mi><mi>i</mi></msub><mo>∈</mo><mo stretchy="false" form="prefix">(</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">\pi_i \in (0, 1]</annotation></semantics></math> and Horvitz-Thompson weights <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mn>1</mn><mi>/</mi><msub><mi>π</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">w_i = 1 / \pi_i</annotation></semantics></math> without mutating global <code>.Random.seed</code>.</li>
+<li>
+<strong>Horvitz-Thompson Active / IPW-PPI (<code><a href="../reference/ppi_mean.html">ppi_mean()</a></code>, <code><a href="../reference/ppi_lm.html">ppi_lm()</a></code>):</strong> Added <code>weights</code> and <code>inclusion_prob</code> parameters implementing exact Active/IPW-PPI++ (Zrnic &amp; Candès, 2024) with Hájek weight normalization, optimal IPW power-tuning <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mover><mi>λ</mi><mo accent="true">̂</mo></mover><mtext mathvariant="normal">IPW</mtext><mo>*</mo></msubsup><annotation encoding="application/x-tex">\hat{\lambda}^*_{\text{IPW}}</annotation></semantics></math>, and valid IPW sandwich SEs—preserving nominal ~95% CI coverage under unequal-probability stratified validation sampling (verified via Monte Carlo simulation tests).</li>
+<li>
+<strong>Cross-Fitted Non-Linear Calibration (<code><a href="../reference/ppi_calibrated.html">ppi_calibrated()</a></code>):</strong> Handles ceiling/floor compression, S-curve saturation, and covariate-dependent non-linear LLM distortion via strict <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math>-fold cross-fitted natural cubic splines (<code><a href="https://rdrr.io/r/splines/ns.html" class="external-link">splines::ns()</a></code>), polynomial bases, logistic splines, or custom R calibration functions, with fold-weighted unlabeled aggregation, out-of-fold calibration diagnostics (<code>$calibration_diagnostics</code>), and 4-way <code><a href="https://ggplot2.tidyverse.org/reference/autoplot.html" class="external-link">autoplot()</a></code> &amp; <code><a href="../reference/format_apa_table.html">format_apa_table()</a></code> comparisons (<code>ppi++_calibrated</code>, <code>ppi++_uncalibrated</code>, <code>human_only</code>, <code>naive_llm</code>).</li>
+<li>
+<strong>Custom R Callable Backend Adapter (<code><a href="../reference/backend_custom.html">backend_custom()</a></code>):</strong> Zero-dependency adapter wrapping any local R function <code>fn(request)</code> (e.g., offline <code>airgapllm</code> pipelines, local Python/C++ model wrappers, or custom scorers) directly into <code><a href="../reference/code_texts.html">code_texts()</a></code> with full JSON schema validation, retry handling, content-addressed caching, and resumable checkpointing.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="bug-fixes--coverage-hardening-0-4-0">Bug Fixes &amp; Coverage Hardening<a class="anchor" aria-label="anchor" href="#bug-fixes--coverage-hardening-0-4-0"></a></h3>
+<ul><li>
+<strong><code>covr</code>-Driven Latent Bug Audit:</strong> Drove overall line coverage from 83.9% to &gt; 92% via targeted branch tests and fixed three latent edge-case bugs uncovered during the audit:
+<ul><li>Fixed polynomial basis formula construction in <code>dpf_test(poly_degree &gt;= 2)</code> where <code>I(t_c^1)</code> collided with <code>t_c:group</code> interaction terms, causing <code>NA</code> conditional slopes.</li>
+<li>Preserved column/row <code>dimnames</code> across SVD pseudo-inverse fallbacks in <code>safe_solve()</code> and <code>vcov_cluster_fit()</code>.</li>
+<li>Added constant-outcome early-return protection in <code>fit_prompt_group_interaction()</code> to prevent spurious <code>summary.lm</code> warnings on zero-variance ratings.</li>
+</ul></li>
+</ul></div>
+<div class="section level3">
+<h3 id="documentation--vignettes-0-4-0">Documentation &amp; Vignettes<a class="anchor" aria-label="anchor" href="#documentation--vignettes-0-4-0"></a></h3>
+<ul><li>Added 5th executable vignette: <code>stratified-and-nonlinear-ppi</code> covering <code><a href="../reference/select_validation_sample.html">select_validation_sample()</a></code>, active IPW-PPI, <code><a href="../reference/ppi_calibrated.html">ppi_calibrated()</a></code>, and <code><a href="../reference/backend_custom.html">backend_custom()</a></code>.</li>
+<li>Updated the standalone Psychometric AI &amp; PPI Methods Guide (<code>docs/llmmetric-guide.pdf</code>) and <code>pkgdown</code> reference site for version <code>0.4.0</code>.</li>
+</ul><hr></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.3.0" id="llmmetric-030">llmmetric 0.3.0<a class="anchor" aria-label="anchor" href="#llmmetric-030"></a></h2>
 <div class="section level3">

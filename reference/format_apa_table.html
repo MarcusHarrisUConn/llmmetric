@@ -19,7 +19,7 @@ Also supports g_study(), dpf_test(), and human_irr() objects."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -37,6 +37,7 @@ Also supports g_study(), dpf_test(), and human_irr() objects."></head><body>
     <li><a class="dropdown-item" href="../articles/ppi-coverage-proof.html">Monte Carlo Coverage Proof: PPI / PPI++ vs. Naive LLM Regressions</a></li>
     <li><a class="dropdown-item" href="../articles/dpf-and-fairness.html">Differential Prompt Functioning (DPF), Fairness, and Human Ceiling Benchmarks</a></li>
     <li><a class="dropdown-item" href="../articles/designing-validation-studies.html">Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting</a></li>
+    <li><a class="dropdown-item" href="../articles/stratified-and-nonlinear-ppi.html">Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends</a></li>
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-pdfs" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">PDFs</button>
@@ -140,15 +141,15 @@ when <code>format = "tibble"</code>).</p></li>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> | Term | Estimator | Estimate | SE | 95% CI | p | Eff. Gain |</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> | --- | --- | --- | --- | --- | --- | --- |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | (Intercept) | Naive LLM | 2.338 | 0.099 | [2.144, 2.532] | &lt; .001 | -- |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | (Intercept) | Human-Only | 2.527 | 0.177 | [2.179, 2.875] | &lt; .001 | 1.00x |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | (Intercept) | PPI++ | 2.500 | 0.127 | [2.251, 2.749] | &lt; .001 | 1.95x |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | x | Naive LLM | 0.883 | 0.063 | [0.760, 1.005] | &lt; .001 | -- |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | x | Human-Only | 1.043 | 0.165 | [0.720, 1.365] | &lt; .001 | 1.00x |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | x | PPI++ | 1.028 | 0.085 | [0.861, 1.194] | &lt; .001 | 3.75x |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | groupgroup_b | Naive LLM | 1.296 | 0.145 | [1.012, 1.579] | &lt; .001 | -- |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | (Intercept) | Naive LLM | 2.338 | 0.099 | [2.144, 2.532] | &amp;lt; .001 | -- |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | (Intercept) | Human-Only | 2.527 | 0.177 | [2.179, 2.875] | &amp;lt; .001 | 1.00x |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | (Intercept) | PPI++ | 2.500 | 0.127 | [2.251, 2.749] | &amp;lt; .001 | 1.95x |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | x | Naive LLM | 0.883 | 0.063 | [0.760, 1.005] | &amp;lt; .001 | -- |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | x | Human-Only | 1.043 | 0.165 | [0.720, 1.365] | &amp;lt; .001 | 1.00x |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | x | PPI++ | 1.028 | 0.085 | [0.861, 1.194] | &amp;lt; .001 | 3.75x |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | groupgroup_b | Naive LLM | 1.296 | 0.145 | [1.012, 1.579] | &amp;lt; .001 | -- |</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> | groupgroup_b | Human-Only | 0.579 | 0.281 | [0.028, 1.131] | .040 | 1.00x |</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> | groupgroup_b | PPI++ | 0.716 | 0.183 | [0.357, 1.075] | &lt; .001 | 2.36x |</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> | groupgroup_b | PPI++ | 0.716 | 0.183 | [0.357, 1.075] | &amp;lt; .001 | 2.36x |</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> *Note.* Labeled validation n = 50; unlabeled LLM N = 70; power-tuning lambda = 0.664. Eff. Gain denotes variance reduction (effective sample-size multiplier) relative to Human-Only.</span>
 </code></pre></div>

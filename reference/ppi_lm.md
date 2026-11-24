@@ -25,7 +25,9 @@ ppi_lm(
   method = c("ppi++", "ppi", "calibrated"),
   lambda = NULL,
   conf_level = 0.95,
-  pred_map = NULL
+  pred_map = NULL,
+  weights = NULL,
+  inclusion_prob = NULL
 )
 ```
 
@@ -70,6 +72,19 @@ ppi_lm(
   `c(distress = "llm_distress")` when an LLM codes a predictor on the
   RHS). Automatically uses `method = "calibrated"` when RHS predictors
   are mapped.
+
+- weights:
+
+  Optional Horvitz-Thompson sampling weights \\w_i \> 0\\ for
+  stratified/active validation sampling (column name in `data` or
+  numeric vector). Mutually exclusive with `inclusion_prob`.
+
+- inclusion_prob:
+
+  Optional validation inclusion probabilities \\\pi_i \in (0, 1\]\\
+  (column name in `data` or numeric vector, e.g., from
+  [`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md)).
+  Mutually exclusive with `weights`.
 
 ## Value
 

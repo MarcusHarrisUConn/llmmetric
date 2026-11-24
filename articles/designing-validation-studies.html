@@ -22,7 +22,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -42,6 +42,7 @@
     <li><a class="dropdown-item" href="../articles/ppi-coverage-proof.html">Monte Carlo Coverage Proof: PPI / PPI++ vs. Naive LLM Regressions</a></li>
     <li><a class="dropdown-item" href="../articles/dpf-and-fairness.html">Differential Prompt Functioning (DPF), Fairness, and Human Ceiling Benchmarks</a></li>
     <li><a class="dropdown-item" href="../articles/designing-validation-studies.html">Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting</a></li>
+    <li><a class="dropdown-item" href="../articles/stratified-and-nonlinear-ppi.html">Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends</a></li>
   </ul>
 </li>
 <li class="nav-item dropdown">
@@ -297,15 +298,15 @@ and optional Bonferroni-adjusted simultaneous confidence intervals
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; | Term | Estimator | Estimate | SE | 95% CI | p | Eff. Gain |</span></span>
 <span><span class="co">#&gt; | --- | --- | --- | --- | --- | --- | --- |</span></span>
-<span><span class="co">#&gt; | none | Naive LLM | 0.577 | 0.016 | [0.546, 0.608] | &lt; .001 | -- |</span></span>
-<span><span class="co">#&gt; | none | Human-Only | 0.593 | 0.040 | [0.514, 0.672] | &lt; .001 | 1.00x |</span></span>
-<span><span class="co">#&gt; | none | PPI++ | 0.577 | 0.016 | [0.546, 0.608] | &lt; .001 | 6.62x |</span></span>
-<span><span class="co">#&gt; | moderate | Naive LLM | 0.151 | 0.011 | [0.129, 0.173] | &lt; .001 | -- |</span></span>
-<span><span class="co">#&gt; | moderate | Human-Only | 0.287 | 0.037 | [0.214, 0.359] | &lt; .001 | 1.00x |</span></span>
-<span><span class="co">#&gt; | moderate | PPI++ | 0.285 | 0.029 | [0.228, 0.342] | &lt; .001 | 1.62x |</span></span>
-<span><span class="co">#&gt; | severe | Naive LLM | 0.272 | 0.014 | [0.244, 0.300] | &lt; .001 | -- |</span></span>
-<span><span class="co">#&gt; | severe | Human-Only | 0.120 | 0.027 | [0.068, 0.172] | &lt; .001 | 1.00x |</span></span>
-<span><span class="co">#&gt; | severe | PPI++ | 0.129 | 0.022 | [0.086, 0.171] | &lt; .001 | 1.51x |</span></span>
+<span><span class="co">#&gt; | none | Naive LLM | 0.577 | 0.016 | [0.546, 0.608] | &amp;lt; .001 | -- |</span></span>
+<span><span class="co">#&gt; | none | Human-Only | 0.593 | 0.040 | [0.514, 0.672] | &amp;lt; .001 | 1.00x |</span></span>
+<span><span class="co">#&gt; | none | PPI++ | 0.577 | 0.016 | [0.546, 0.608] | &amp;lt; .001 | 6.62x |</span></span>
+<span><span class="co">#&gt; | moderate | Naive LLM | 0.151 | 0.011 | [0.129, 0.173] | &amp;lt; .001 | -- |</span></span>
+<span><span class="co">#&gt; | moderate | Human-Only | 0.287 | 0.037 | [0.214, 0.359] | &amp;lt; .001 | 1.00x |</span></span>
+<span><span class="co">#&gt; | moderate | PPI++ | 0.285 | 0.029 | [0.228, 0.342] | &amp;lt; .001 | 1.62x |</span></span>
+<span><span class="co">#&gt; | severe | Naive LLM | 0.272 | 0.014 | [0.244, 0.300] | &amp;lt; .001 | -- |</span></span>
+<span><span class="co">#&gt; | severe | Human-Only | 0.120 | 0.027 | [0.068, 0.172] | &amp;lt; .001 | 1.00x |</span></span>
+<span><span class="co">#&gt; | severe | PPI++ | 0.129 | 0.022 | [0.086, 0.171] | &amp;lt; .001 | 1.51x |</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; *Note.* Labeled validation n = 150; unlabeled LLM N = 850; power-tuning lambda = 0.85, 0.72, 0.40. Eff. Gain denotes variance reduction (effective sample-size multiplier) relative to Human-Only.</span></span></code></pre></div>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
@@ -380,12 +381,12 @@ gain):</p>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; | Term | Estimator | Estimate | SE | 95% CI | p | Eff. Gain |</span></span>
 <span><span class="co">#&gt; | --- | --- | --- | --- | --- | --- | --- |</span></span>
-<span><span class="co">#&gt; | x | Naive LLM | 0.883 | 0.077 | [0.724, 1.041] | &lt; .001 | -- |</span></span>
-<span><span class="co">#&gt; | x | Human-Only | 1.043 | 0.179 | [0.673, 1.413] | &lt; .001 | 1.00x |</span></span>
-<span><span class="co">#&gt; | x | PPI++_CLUSTERED | 1.029 | 0.085 | [0.855, 1.203] | &lt; .001 | 4.46x |</span></span>
-<span><span class="co">#&gt; | groupgroup_b | Naive LLM | 1.296 | 0.129 | [1.033, 1.559] | &lt; .001 | -- |</span></span>
+<span><span class="co">#&gt; | x | Naive LLM | 0.883 | 0.077 | [0.724, 1.041] | &amp;lt; .001 | -- |</span></span>
+<span><span class="co">#&gt; | x | Human-Only | 1.043 | 0.179 | [0.673, 1.413] | &amp;lt; .001 | 1.00x |</span></span>
+<span><span class="co">#&gt; | x | PPI++_CLUSTERED | 1.029 | 0.087 | [0.852, 1.207] | &amp;lt; .001 | 4.27x |</span></span>
+<span><span class="co">#&gt; | groupgroup_b | Naive LLM | 1.296 | 0.129 | [1.033, 1.559] | &amp;lt; .001 | -- |</span></span>
 <span><span class="co">#&gt; | groupgroup_b | Human-Only | 0.579 | 0.243 | [0.078, 1.080] | .025 | 1.00x |</span></span>
-<span><span class="co">#&gt; | groupgroup_b | PPI++_CLUSTERED | 0.705 | 0.165 | [0.368, 1.042] | &lt; .001 | 2.17x |</span></span>
+<span><span class="co">#&gt; | groupgroup_b | PPI++_CLUSTERED | 0.705 | 0.168 | [0.361, 1.049] | &amp;lt; .001 | 2.08x |</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; *Note.* Labeled validation n = 50; unlabeled LLM N = 70; power-tuning lambda = 0.604. Eff. Gain denotes variance reduction (effective sample-size multiplier) relative to Human-Only.</span></span></code></pre></div>
 </div>

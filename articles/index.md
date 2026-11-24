@@ -11,3 +11,6 @@
 - [Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence
   PPI, and APA
   Reporting](https://marcusharrisphd.com/llmmetric/articles/designing-validation-studies.md):
+- [Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration,
+  and Custom
+  Backends](https://marcusharrisphd.com/llmmetric/articles/stratified-and-nonlinear-ppi.md):

@@ -27,7 +27,7 @@ LLM-coded predictors via pred_map.
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -45,6 +45,7 @@ LLM-coded predictors via pred_map.
     <li><a class="dropdown-item" href="../articles/ppi-coverage-proof.html">Monte Carlo Coverage Proof: PPI / PPI++ vs. Naive LLM Regressions</a></li>
     <li><a class="dropdown-item" href="../articles/dpf-and-fairness.html">Differential Prompt Functioning (DPF), Fairness, and Human Ceiling Benchmarks</a></li>
     <li><a class="dropdown-item" href="../articles/designing-validation-studies.html">Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting</a></li>
+    <li><a class="dropdown-item" href="../articles/stratified-and-nonlinear-ppi.html">Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends</a></li>
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-pdfs" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">PDFs</button>
@@ -89,7 +90,9 @@ LLM-coded predictors via <code>pred_map</code>.</p></li>
 <span>  method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"ppi++"</span>, <span class="st">"ppi"</span>, <span class="st">"calibrated"</span><span class="op">)</span>,</span>
 <span>  lambda <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  conf_level <span class="op">=</span> <span class="fl">0.95</span>,</span>
-<span>  pred_map <span class="op">=</span> <span class="cn">NULL</span></span>
+<span>  pred_map <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  weights <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  inclusion_prob <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -135,6 +138,18 @@ parameter (for <code>"ppi++"</code> or <code>"ppi"</code>).</p></dd>
 names in <code>formula</code> to their LLM-coded surrogate column names (e.g.,
 <code>c(distress = "llm_distress")</code> when an LLM codes a predictor on the RHS).
 Automatically uses <code>method = "calibrated"</code> when RHS predictors are mapped.</p></dd>
+
+
+<dt id="arg-weights">weights<a class="anchor" aria-label="anchor" href="#arg-weights"></a></dt>
+<dd><p>Optional Horvitz-Thompson sampling weights \(w_i &gt; 0\) for
+stratified/active validation sampling (column name in <code>data</code> or numeric
+vector). Mutually exclusive with <code>inclusion_prob</code>.</p></dd>
+
+
+<dt id="arg-inclusion-prob">inclusion_prob<a class="anchor" aria-label="anchor" href="#arg-inclusion-prob"></a></dt>
+<dd><p>Optional validation inclusion probabilities
+\(\pi_i \in (0, 1]\) (column name in <code>data</code> or numeric vector, e.g.,
+from <code><a href="select_validation_sample.html">select_validation_sample()</a></code>). Mutually exclusive with <code>weights</code>.</p></dd>
 
 </dl></div>
     <div class="section level2">

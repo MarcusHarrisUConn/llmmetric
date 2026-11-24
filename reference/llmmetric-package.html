@@ -5,19 +5,21 @@ orchestration with resumable checkpointing and hardened caching,
 Generalizability Theory (G-study and D-study), calibration against human
 gold standards and inter-rater reliability ceilings, temporal drift
 monitoring, Differential Prompt Functioning (DPF) invariance tests,
-Prediction-Powered Inference (PPI, PPI++, prevalence proportions, and
-clustered/multilevel extensions), validation sample-size/power planning,
-APA reporting tables, and publication-ready ggplot2::autoplot()
-diagnostics."><meta property="og:description" content="Treats large language models (LLMs) explicitly as fallible psychometric
+Prediction-Powered Inference (PPI, PPI++, Horvitz-Thompson IPW-PPI,
+cross-fitted non-linear calibration, prevalence proportions, and
+clustered/multilevel extensions), stratified validation sampling,
+validation sample-size/power planning, APA reporting tables, and
+publication-ready ggplot2::autoplot() diagnostics."><meta property="og:description" content="Treats large language models (LLMs) explicitly as fallible psychometric
 measurement instruments. Provides multi-facet structured coding
 orchestration with resumable checkpointing and hardened caching,
 Generalizability Theory (G-study and D-study), calibration against human
 gold standards and inter-rater reliability ceilings, temporal drift
 monitoring, Differential Prompt Functioning (DPF) invariance tests,
-Prediction-Powered Inference (PPI, PPI++, prevalence proportions, and
-clustered/multilevel extensions), validation sample-size/power planning,
-APA reporting tables, and publication-ready ggplot2::autoplot()
-diagnostics."></head><body>
+Prediction-Powered Inference (PPI, PPI++, Horvitz-Thompson IPW-PPI,
+cross-fitted non-linear calibration, prevalence proportions, and
+clustered/multilevel extensions), stratified validation sampling,
+validation sample-size/power planning, APA reporting tables, and
+publication-ready ggplot2::autoplot() diagnostics."></head><body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
@@ -25,7 +27,7 @@ diagnostics."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -43,6 +45,7 @@ diagnostics."></head><body>
     <li><a class="dropdown-item" href="../articles/ppi-coverage-proof.html">Monte Carlo Coverage Proof: PPI / PPI++ vs. Naive LLM Regressions</a></li>
     <li><a class="dropdown-item" href="../articles/dpf-and-fairness.html">Differential Prompt Functioning (DPF), Fairness, and Human Ceiling Benchmarks</a></li>
     <li><a class="dropdown-item" href="../articles/designing-validation-studies.html">Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting</a></li>
+    <li><a class="dropdown-item" href="../articles/stratified-and-nonlinear-ppi.html">Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends</a></li>
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-pdfs" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">PDFs</button>
@@ -73,21 +76,24 @@ orchestration with resumable checkpointing and hardened caching,
 Generalizability Theory (G-study and D-study), calibration against human
 gold standards and inter-rater reliability ceilings, temporal drift
 monitoring, Differential Prompt Functioning (DPF) invariance tests,
-Prediction-Powered Inference (PPI, PPI++, prevalence proportions, and
-clustered/multilevel extensions), validation sample-size/power planning,
-APA reporting tables, and publication-ready <code><a href="https://ggplot2.tidyverse.org/reference/autoplot.html" class="external-link">ggplot2::autoplot()</a></code>
-diagnostics.</p>
+Prediction-Powered Inference (PPI, PPI++, Horvitz-Thompson IPW-PPI,
+cross-fitted non-linear calibration, prevalence proportions, and
+clustered/multilevel extensions), stratified validation sampling,
+validation sample-size/power planning, APA reporting tables, and
+publication-ready <code><a href="https://ggplot2.tidyverse.org/reference/autoplot.html" class="external-link">ggplot2::autoplot()</a></code> diagnostics.</p>
     </div>
 
 
     <div class="section level2">
     <h2 id="see-also">See also<a class="anchor" aria-label="anchor" href="#see-also"></a></h2>
     <div class="dont-index"><p>Key workflow entry points:</p><ul><li><p>Multi-facet coding: <code><a href="coding_schema.html">coding_schema()</a></code>, <code><a href="coding_design.html">coding_design()</a></code>, <code><a href="code_texts.html">code_texts()</a></code>,
-<code><a href="coding_cache.html">coding_cache()</a></code>, <code><a href="backend_openai.html">backend_openai()</a></code>, <code><a href="backend_ollama.html">backend_ollama()</a></code>, <code><a href="backend_mock.html">backend_mock()</a></code></p></li>
+<code><a href="coding_cache.html">coding_cache()</a></code>, <code><a href="backend_openai.html">backend_openai()</a></code>, <code><a href="backend_ollama.html">backend_ollama()</a></code>,
+<code><a href="backend_custom.html">backend_custom()</a></code>, <code><a href="backend_mock.html">backend_mock()</a></code></p></li>
 <li><p>Psychometrics &amp; fairness: <code><a href="g_study.html">g_study()</a></code>, <code><a href="d_study.html">d_study()</a></code>, <code><a href="calibration_metrics.html">calibration_metrics()</a></code>,
 <code><a href="human_irr.html">human_irr()</a></code>, <code><a href="check_drift.html">check_drift()</a></code>, <code><a href="dpf_test.html">dpf_test()</a></code></p></li>
-<li><p>Error-corrected inference &amp; planning: <code><a href="ppi_mean.html">ppi_mean()</a></code>, <code><a href="ppi_proportion.html">ppi_proportion()</a></code>,
-<code><a href="ppi_lm.html">ppi_lm()</a></code>, <code><a href="ppi_glm.html">ppi_glm()</a></code>, <code><a href="ppi_clustered.html">ppi_clustered()</a></code>, <code><a href="ppi_lmer.html">ppi_lmer()</a></code>,
+<li><p>Error-corrected inference &amp; planning: <code><a href="select_validation_sample.html">select_validation_sample()</a></code>,
+<code><a href="ppi_mean.html">ppi_mean()</a></code>, <code><a href="ppi_proportion.html">ppi_proportion()</a></code>, <code><a href="ppi_lm.html">ppi_lm()</a></code>, <code><a href="ppi_glm.html">ppi_glm()</a></code>,
+<code><a href="ppi_calibrated.html">ppi_calibrated()</a></code>, <code><a href="ppi_clustered.html">ppi_clustered()</a></code>, <code><a href="ppi_lmer.html">ppi_lmer()</a></code>,
 <code><a href="ppi_sample_size.html">ppi_sample_size()</a></code>, <code><a href="ppi_power.html">ppi_power()</a></code>, <code><a href="format_apa_table.html">format_apa_table()</a></code></p></li>
 </ul></div>
     </div>

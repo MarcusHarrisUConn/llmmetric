@@ -409,9 +409,9 @@ fit_ml
 #> # A tibble: 3 × 7
 #>   term         estimate std_error conf_low conf_high p_value var_gain
 #>   <chr>           <dbl>     <dbl>    <dbl>     <dbl> <chr>      <dbl>
-#> 1 (Intercept)     2.50      0.150    2.20       2.81 <0.0001     1.59
-#> 2 x               1.03      0.085    0.855      1.20 <0.0001     4.46
-#> 3 groupgroup_b    0.705     0.165    0.368      1.04 0.0002      2.17
+#> 1 (Intercept)     2.50     0.153     2.19       2.82 <0.0001     1.53
+#> 2 x               1.03     0.0868    0.852      1.21 <0.0001     4.27
+#> 3 groupgroup_b    0.705    0.168     0.361      1.05 0.0002      2.08
 ```
 
 See

@@ -6,9 +6,11 @@ orchestration with resumable checkpointing and hardened caching,
 Generalizability Theory (G-study and D-study), calibration against human
 gold standards and inter-rater reliability ceilings, temporal drift
 monitoring, Differential Prompt Functioning (DPF) invariance tests,
-Prediction-Powered Inference (PPI, PPI++, prevalence proportions, and
-clustered/multilevel extensions), validation sample-size/power planning,
-APA reporting tables, and publication-ready
+Prediction-Powered Inference (PPI, PPI++, Horvitz-Thompson IPW-PPI,
+cross-fitted non-linear calibration, prevalence proportions, and
+clustered/multilevel extensions), stratified validation sampling,
+validation sample-size/power planning, APA reporting tables, and
+publication-ready
 [`ggplot2::autoplot()`](https://ggplot2.tidyverse.org/reference/autoplot.html)
 diagnostics.
 
@@ -23,6 +25,7 @@ Key workflow entry points:
   [`coding_cache()`](https://marcusharrisphd.com/llmmetric/reference/coding_cache.md),
   [`backend_openai()`](https://marcusharrisphd.com/llmmetric/reference/backend_openai.md),
   [`backend_ollama()`](https://marcusharrisphd.com/llmmetric/reference/backend_ollama.md),
+  [`backend_custom()`](https://marcusharrisphd.com/llmmetric/reference/backend_custom.md),
   [`backend_mock()`](https://marcusharrisphd.com/llmmetric/reference/backend_mock.md)
 
 - Psychometrics & fairness:
@@ -34,10 +37,12 @@ Key workflow entry points:
   [`dpf_test()`](https://marcusharrisphd.com/llmmetric/reference/dpf_test.md)
 
 - Error-corrected inference & planning:
+  [`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md),
   [`ppi_mean()`](https://marcusharrisphd.com/llmmetric/reference/ppi_mean.md),
   [`ppi_proportion()`](https://marcusharrisphd.com/llmmetric/reference/ppi_proportion.md),
   [`ppi_lm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lm.md),
   [`ppi_glm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_glm.md),
+  [`ppi_calibrated()`](https://marcusharrisphd.com/llmmetric/reference/ppi_calibrated.md),
   [`ppi_clustered()`](https://marcusharrisphd.com/llmmetric/reference/ppi_clustered.md),
   [`ppi_lmer()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lmer.md),
   [`ppi_sample_size()`](https://marcusharrisphd.com/llmmetric/reference/ppi_sample_size.md),

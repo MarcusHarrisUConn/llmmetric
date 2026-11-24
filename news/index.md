@@ -1,5 +1,195 @@
 # Changelog
 
+## llmmetric 0.5.0
+
+### Security Hardening (Independent Peer Red-Team Audit Remediation)
+
+- **Eliminated `cli` Glue Injection / RCE & Secret Exfiltration
+  ([`backend_openai()`](https://marcusharrisphd.com/llmmetric/reference/backend_openai.md),
+  [`backend_ollama()`](https://marcusharrisphd.com/llmmetric/reference/backend_ollama.md)):**
+  Replaced dynamic [`paste0()`](https://rdrr.io/r/base/paste.html) error
+  strings passed into
+  [`cli::cli_abort()`](https://cli.r-lib.org/reference/cli_abort.html)
+  with safe variable interpolation (`"{safe_msg}"`), eliminating
+  arbitrary `{...}` glue execution and API-key exfiltration from
+  adversarial HTTP/transport error bodies.
+- **Single-Pass Prompt Template Rendering
+  (`render_prompt_template()`):** Rewrote template substitution to scan
+  placeholders exclusively in the original template string in a single
+  pass, preventing untrusted text containing `{ssn}`, `{patient_name}`,
+  or `{human_score}` from triggering second-order substitution of
+  adjacent data-frame columns.
+- **Sealed Custom HTTP Headers
+  (`backend_openai(extra_headers = ...)`):** All `extra_headers` values
+  are now stored inside the non-serialized session secret vault
+  (`llm_redacted_secret`) and scrubbed from error messages alongside
+  `api_key`.
+- **Disk Cache & Checkpoint Hardening (`resolve_safe_cache_path()`,
+  [`cache_set()`](https://marcusharrisphd.com/llmmetric/reference/cache_operations.md),
+  [`code_texts()`](https://marcusharrisphd.com/llmmetric/reference/code_texts.md)):**
+  Blocked symlink escapes in disk cache directories/entries and
+  checkpoint files, enforced `0600` owner-only permissions on written
+  cache/checkpoint files, ensured `keep_raw = FALSE` omits raw model
+  outputs from persisted disk caches and checkpoints, rejected directory
+  paths as `checkpoint_file`, and verified atomic write success.
+- **Markdown/HTML & LaTeX Escaping
+  ([`format_apa_table()`](https://marcusharrisphd.com/llmmetric/reference/format_apa_table.md)):**
+  Escaped `|`, `<`, `>`, and newlines in Markdown tables (preventing
+  column breakouts and raw HTML/XSS injection) and escaped `{`, `}`,
+  `~`, `\`, and newlines cleanly in LaTeX tables.
+- **Strict Untrusted JSON & IPv6 URL Validation
+  (`extract_json_payload()`, `validate_endpoint_url()`):** Rejected
+  multi-object payloads inside raw or fenced responses, prevented
+  unmatched prose double quotes from breaking balanced JSON extraction,
+  filtered `\x7f` DEL bytes, and enforced `[1, 65535]` port range
+  validation on bracketed IPv6 hosts.
+
+### Statistical Accuracy, Boundary Guards & Interop Improvements
+
+- **Cross-Fitted Non-Linear Calibration
+  ([`ppi_calibrated()`](https://marcusharrisphd.com/llmmetric/reference/ppi_calibrated.md)):**
+  Replaced internal model-frame names with collision-proof identifiers
+  (fixing overwrites when covariates are named `y` or `b_1`, and
+  supporting non-syntactic column names), eliminated held-out `val_df`
+  leakage into unlabeled predictions by determining active fold
+  covariates strictly from training folds, and added upfront domain
+  validation for `calibrator = "logistic"` and canonical GLM families.
+- **Horvitz-Thompson Positivity & Effective Sample Size
+  ([`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md),
+  [`ppi_mean()`](https://marcusharrisphd.com/llmmetric/reference/ppi_mean.md),
+  [`ppi_lm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lm.md)):**
+  Enforced `n >= H` positivity in stratified sampling (preventing
+  $`\pi_i = 0`$ and `Inf` weights), rejected non-finite/zero weights
+  across all corpus rows in IPW-PPI, and enforced Kish effective
+  sample-size checks (`n_eff >= 2` / `n_eff > p`) with effective-df `t`
+  inference to prevent zero-SE collapse under extreme weights.
+- **Numeric Ordinal Ordering & IRR Guards
+  ([`human_irr()`](https://marcusharrisphd.com/llmmetric/reference/human_irr.md),
+  [`calibration_metrics()`](https://marcusharrisphd.com/llmmetric/reference/calibration_metrics.md)):**
+  Fixed lexicographic sorting on numeric ordinal scales (e.g., `1:10`
+  now sorts numerically rather than `"1", "10", "2", ...`), validated
+  `>= 2` distinct active non-NA raters after `na.rm` filtering, and
+  required `>= 2` overlapping multi-rated units in continuous
+  [`human_irr()`](https://marcusharrisphd.com/llmmetric/reference/human_irr.md).
+- **Proportion PPI & [`confint()`](https://rdrr.io/r/stats/confint.html)
+  Parity
+  ([`ppi_proportion()`](https://marcusharrisphd.com/llmmetric/reference/ppi_proportion.md)):**
+  Prevented inverted clamped CIs (`pmin(pmax(..., 0), 1)` on both
+  endpoints), validated continuous probability inputs in `[0, 1]`, and
+  added `confint.llm_ppi_proportion()` honoring `simultaneous` and
+  `clamp_ci`.
+- **Calibrated `pred_map` Alignment & GLM Domain Checks
+  ([`ppi_lm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lm.md),
+  [`ppi_glm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_glm.md)):**
+  Jointly harmonized categorical factor levels across human labeled,
+  surrogate labeled, and surrogate unlabeled splits by exact column
+  name, and enforced `[0, 1]`
+  ([`binomial()`](https://rdrr.io/r/stats/family.html)) and `>= 0`
+  ([`poisson()`](https://rdrr.io/r/stats/family.html)) domain
+  constraints.
+- **Clustered & Multilevel Inference
+  ([`ppi_clustered()`](https://marcusharrisphd.com/llmmetric/reference/ppi_clustered.md),
+  [`ppi_lmer()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lmer.md)):**
+  Enforced `n > p`, aligned overlapping-cluster CR1 scaling and
+  Welch-Satterthwaite effective cluster degrees of freedom (so
+  `lambda = 0` matches `human_only` identically), and explicitly
+  rejected unsupported multiple random-effect or random-slope formulas
+  in
+  [`ppi_lmer()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lmer.md).
+- **Schema, Drift, D-Study & Cross-Package Interop
+  ([`validate_coded_output()`](https://marcusharrisphd.com/llmmetric/reference/validate_coded_output.md),
+  [`check_drift()`](https://marcusharrisphd.com/llmmetric/reference/check_drift.md),
+  [`d_study()`](https://marcusharrisphd.com/llmmetric/reference/d_study.md),
+  [`g_study()`](https://marcusharrisphd.com/llmmetric/reference/g_study.md),
+  [`backend_custom()`](https://marcusharrisphd.com/llmmetric/reference/backend_custom.md)):**
+  Accepted `NA_character_` on `nullable = TRUE` fields and native R
+  `factor` values under default `coerce = FALSE`; added upfront
+  `na.rm = FALSE` error in
+  [`check_drift()`](https://marcusharrisphd.com/llmmetric/reference/check_drift.md)
+  and [`is.finite()`](https://rdrr.io/r/base/is.finite.html) checks on
+  [`d_study()`](https://marcusharrisphd.com/llmmetric/reference/d_study.md)
+  `grid`/`costs`; expanded `g_study(facets = NULL)` auto-detection to
+  include `prompt_id`, `seed`, and `pass_id` (seamless
+  `airgapllm::consensus_passes()` interop); and stripped dot-prefixed
+  metadata columns from 1-row data frames returned by
+  [`backend_custom()`](https://marcusharrisphd.com/llmmetric/reference/backend_custom.md).
+
+------------------------------------------------------------------------
+
+## llmmetric 0.4.0
+
+### New Features
+
+- **Stratified & Active Validation Sampling
+  ([`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md)):**
+  Draws reproducible human-validation subsets under simple random
+  (`"simple"`), subgroup-stratified (`"stratified"` with
+  `"proportional"`, `"equal"`, or `"neyman"` allocation), score-based
+  Neyman (`"neyman"`), score-quantile (`"quantile"`), and whole-cluster
+  (`"cluster"`) designs, returning exact inclusion probabilities
+  $`\pi_i \in (0, 1]`$ and Horvitz-Thompson weights $`w_i = 1 / \pi_i`$
+  without mutating global `.Random.seed`.
+- **Horvitz-Thompson Active / IPW-PPI
+  ([`ppi_mean()`](https://marcusharrisphd.com/llmmetric/reference/ppi_mean.md),
+  [`ppi_lm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lm.md)):**
+  Added `weights` and `inclusion_prob` parameters implementing exact
+  Active/IPW-PPI++ (Zrnic & Candès, 2024) with Hájek weight
+  normalization, optimal IPW power-tuning
+  $`\hat{\lambda}^*_{\text{IPW}}`$, and valid IPW sandwich
+  SEs—preserving nominal ~95% CI coverage under unequal-probability
+  stratified validation sampling (verified via Monte Carlo simulation
+  tests).
+- **Cross-Fitted Non-Linear Calibration
+  ([`ppi_calibrated()`](https://marcusharrisphd.com/llmmetric/reference/ppi_calibrated.md)):**
+  Handles ceiling/floor compression, S-curve saturation, and
+  covariate-dependent non-linear LLM distortion via strict $`K`$-fold
+  cross-fitted natural cubic splines
+  ([`splines::ns()`](https://rdrr.io/r/splines/ns.html)), polynomial
+  bases, logistic splines, or custom R calibration functions, with
+  fold-weighted unlabeled aggregation, out-of-fold calibration
+  diagnostics (`$calibration_diagnostics`), and 4-way
+  [`autoplot()`](https://ggplot2.tidyverse.org/reference/autoplot.html)
+  &
+  [`format_apa_table()`](https://marcusharrisphd.com/llmmetric/reference/format_apa_table.md)
+  comparisons (`ppi++_calibrated`, `ppi++_uncalibrated`, `human_only`,
+  `naive_llm`).
+- **Custom R Callable Backend Adapter
+  ([`backend_custom()`](https://marcusharrisphd.com/llmmetric/reference/backend_custom.md)):**
+  Zero-dependency adapter wrapping any local R function `fn(request)`
+  (e.g., offline `airgapllm` pipelines, local Python/C++ model wrappers,
+  or custom scorers) directly into
+  [`code_texts()`](https://marcusharrisphd.com/llmmetric/reference/code_texts.md)
+  with full JSON schema validation, retry handling, content-addressed
+  caching, and resumable checkpointing.
+
+### Bug Fixes & Coverage Hardening
+
+- **`covr`-Driven Latent Bug Audit:** Drove overall line coverage from
+  83.9% to \> 92% via targeted branch tests and fixed three latent
+  edge-case bugs uncovered during the audit:
+  - Fixed polynomial basis formula construction in
+    `dpf_test(poly_degree >= 2)` where `I(t_c^1)` collided with
+    `t_c:group` interaction terms, causing `NA` conditional slopes.
+  - Preserved column/row `dimnames` across SVD pseudo-inverse fallbacks
+    in `safe_solve()` and `vcov_cluster_fit()`.
+  - Added constant-outcome early-return protection in
+    `fit_prompt_group_interaction()` to prevent spurious `summary.lm`
+    warnings on zero-variance ratings.
+
+### Documentation & Vignettes
+
+- Added 5th executable vignette: `stratified-and-nonlinear-ppi` covering
+  [`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md),
+  active IPW-PPI,
+  [`ppi_calibrated()`](https://marcusharrisphd.com/llmmetric/reference/ppi_calibrated.md),
+  and
+  [`backend_custom()`](https://marcusharrisphd.com/llmmetric/reference/backend_custom.md).
+- Updated the standalone Psychometric AI & PPI Methods Guide
+  (`docs/llmmetric-guide.pdf`) and `pkgdown` reference site for version
+  `0.4.0`.
+
+------------------------------------------------------------------------
+
 ## llmmetric 0.3.0
 
 ### New Features & Workflow Hardening

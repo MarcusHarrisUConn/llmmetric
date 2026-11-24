@@ -92,15 +92,15 @@ tab
 #> 
 #> | Term | Estimator | Estimate | SE | 95% CI | p | Eff. Gain |
 #> | --- | --- | --- | --- | --- | --- | --- |
-#> | (Intercept) | Naive LLM | 2.338 | 0.099 | [2.144, 2.532] | < .001 | -- |
-#> | (Intercept) | Human-Only | 2.527 | 0.177 | [2.179, 2.875] | < .001 | 1.00x |
-#> | (Intercept) | PPI++ | 2.500 | 0.127 | [2.251, 2.749] | < .001 | 1.95x |
-#> | x | Naive LLM | 0.883 | 0.063 | [0.760, 1.005] | < .001 | -- |
-#> | x | Human-Only | 1.043 | 0.165 | [0.720, 1.365] | < .001 | 1.00x |
-#> | x | PPI++ | 1.028 | 0.085 | [0.861, 1.194] | < .001 | 3.75x |
-#> | groupgroup_b | Naive LLM | 1.296 | 0.145 | [1.012, 1.579] | < .001 | -- |
+#> | (Intercept) | Naive LLM | 2.338 | 0.099 | [2.144, 2.532] | &lt; .001 | -- |
+#> | (Intercept) | Human-Only | 2.527 | 0.177 | [2.179, 2.875] | &lt; .001 | 1.00x |
+#> | (Intercept) | PPI++ | 2.500 | 0.127 | [2.251, 2.749] | &lt; .001 | 1.95x |
+#> | x | Naive LLM | 0.883 | 0.063 | [0.760, 1.005] | &lt; .001 | -- |
+#> | x | Human-Only | 1.043 | 0.165 | [0.720, 1.365] | &lt; .001 | 1.00x |
+#> | x | PPI++ | 1.028 | 0.085 | [0.861, 1.194] | &lt; .001 | 3.75x |
+#> | groupgroup_b | Naive LLM | 1.296 | 0.145 | [1.012, 1.579] | &lt; .001 | -- |
 #> | groupgroup_b | Human-Only | 0.579 | 0.281 | [0.028, 1.131] | .040 | 1.00x |
-#> | groupgroup_b | PPI++ | 0.716 | 0.183 | [0.357, 1.075] | < .001 | 2.36x |
+#> | groupgroup_b | PPI++ | 0.716 | 0.183 | [0.357, 1.075] | &lt; .001 | 2.36x |
 #> 
 #> *Note.* Labeled validation n = 50; unlabeled LLM N = 70; power-tuning lambda = 0.664. Eff. Gain denotes variance reduction (effective sample-size multiplier) relative to Human-Only.
 ```

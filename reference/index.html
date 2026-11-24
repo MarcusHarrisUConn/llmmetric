@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -25,6 +25,7 @@
     <li><a class="dropdown-item" href="../articles/ppi-coverage-proof.html">Monte Carlo Coverage Proof: PPI / PPI++ vs. Naive LLM Regressions</a></li>
     <li><a class="dropdown-item" href="../articles/dpf-and-fairness.html">Differential Prompt Functioning (DPF), Fairness, and Human Ceiling Benchmarks</a></li>
     <li><a class="dropdown-item" href="../articles/designing-validation-studies.html">Designing Validation Studies: G/D-Studies, Sample Sizing, Prevalence PPI, and APA Reporting</a></li>
+    <li><a class="dropdown-item" href="../articles/stratified-and-nonlinear-ppi.html">Stratified Validation Sampling, IPW-PPI, Cross-Fitted Calibration, and Custom Backends</a></li>
   </ul></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-pdfs" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">PDFs</button>
@@ -153,6 +154,13 @@
 
         </dt>
         <dd>Local Ollama HTTP Coding Backend</dd>
+
+        <dt>
+
+          <code><a href="backend_custom.html">backend_custom()</a></code>
+
+        </dt>
+        <dd>Custom R-Function LLM Coding Backend Adapter</dd>
       </dl></div><div class="section level2">
       <h2 id="llm-psychometrics-generalizability">LLM Psychometrics &amp; Generalizability<a class="anchor" aria-label="anchor" href="#llm-psychometrics-generalizability"></a></h2>
 
@@ -216,7 +224,7 @@
       </dl></div><div class="section level2">
       <h2 id="prediction-powered-inference-multilevel-extensions">Prediction-Powered Inference &amp; Multilevel Extensions<a class="anchor" aria-label="anchor" href="#prediction-powered-inference-multilevel-extensions"></a></h2>
 
-      <div class="section-desc"><p>Error-corrected estimators combining human validation subsets with large LLM-coded corpora.</p></div>
+      <div class="section-desc"><p>Error-corrected estimators combining human validation subsets with large LLM-coded corpora, including Horvitz-Thompson active IPW-PPI and cross-fitted non-linear calibration.</p></div>
 
       <dl></dl></div><div class="section level2">
 
@@ -228,7 +236,7 @@
           <code><a href="ppi_mean.html">ppi_mean()</a></code>
 
         </dt>
-        <dd>Prediction-Powered Mean Estimation (PPI / PPI++)</dd>
+        <dd>Prediction-Powered Mean Estimation (PPI / PPI++ / Active IPW-PPI)</dd>
 
         <dt>
 
@@ -253,6 +261,13 @@
 
         <dt>
 
+          <code><a href="ppi_calibrated.html">ppi_calibrated()</a></code>
+
+        </dt>
+        <dd>Cross-Fitted Non-Linear Calibration for Prediction-Powered Inference</dd>
+
+        <dt>
+
           <code><a href="ppi_clustered.html">ppi_clustered()</a></code>
 
         </dt>
@@ -265,9 +280,9 @@
         </dt>
         <dd>Multilevel Random-Intercept Prediction-Powered Inference (<code>ppi_lmer</code>)</dd>
       </dl></div><div class="section level2">
-      <h2 id="study-planning-apa-reporting">Study Planning &amp; APA Reporting<a class="anchor" aria-label="anchor" href="#study-planning-apa-reporting"></a></h2>
+      <h2 id="study-planning-sampling-apa-reporting">Study Planning, Sampling &amp; APA Reporting<a class="anchor" aria-label="anchor" href="#study-planning-sampling-apa-reporting"></a></h2>
 
-      <div class="section-desc"><p>Validation sample-size planning, power curves, and publication-ready APA 7th-edition tables.</p></div>
+      <div class="section-desc"><p>Stratified validation sampling, sample-size/power planning, and publication-ready APA 7th-edition tables.</p></div>
 
       <dl></dl></div><div class="section level2">
 
@@ -275,6 +290,13 @@
 
 
       <dl><dt>
+
+          <code><a href="select_validation_sample.html">select_validation_sample()</a></code>
+
+        </dt>
+        <dd>Select a Human Validation Sample with Exact Inclusion Probabilities &amp; IPW Weights</dd>
+
+        <dt>
 
           <code><a href="ppi_sample_size.html">ppi_sample_size()</a></code>
 

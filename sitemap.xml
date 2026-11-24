@@ -10,6 +10,7 @@
 <url><loc>https://marcusharrisphd.com/llmmetric/articles/getting-started.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/articles/index.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/articles/ppi-coverage-proof.html</loc></url>
+<url><loc>https://marcusharrisphd.com/llmmetric/articles/stratified-and-nonlinear-ppi.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/authors.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/index.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/news/index.html</loc></url>
@@ -23,6 +24,7 @@
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/autoplot.llm_human_irr.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/autoplot.llm_ppi.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/autoplot.llm_ppi_power.html</loc></url>
+<url><loc>https://marcusharrisphd.com/llmmetric/reference/backend_custom.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/backend_mock.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/backend_ollama.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/backend_openai.html</loc></url>
@@ -43,6 +45,7 @@
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/human_irr.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/index.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/llmmetric-package.html</loc></url>
+<url><loc>https://marcusharrisphd.com/llmmetric/reference/ppi_calibrated.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/ppi_clustered.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/ppi_glm.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/ppi_lm.html</loc></url>
@@ -53,6 +56,7 @@
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/ppi_sample_size.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/reexports.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/schema_field.html</loc></url>
+<url><loc>https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/simulate_coding_study.html</loc></url>
 <url><loc>https://marcusharrisphd.com/llmmetric/reference/validate_coded_output.html</loc></url>
 </urlset>

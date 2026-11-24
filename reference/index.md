@@ -36,6 +36,8 @@ integrity-checked caches, and pluggable backends.
   : OpenAI-Compatible HTTP Coding Backend
 - [`backend_ollama()`](https://marcusharrisphd.com/llmmetric/reference/backend_ollama.md)
   : Local Ollama HTTP Coding Backend
+- [`backend_custom()`](https://marcusharrisphd.com/llmmetric/reference/backend_custom.md)
+  : Custom R-Function LLM Coding Backend Adapter
 
 ## LLM Psychometrics & Generalizability
 
@@ -66,10 +68,11 @@ prompt-level FDR screening.
 ## Prediction-Powered Inference & Multilevel Extensions
 
 Error-corrected estimators combining human validation subsets with large
-LLM-coded corpora.
+LLM-coded corpora, including Horvitz-Thompson active IPW-PPI and
+cross-fitted non-linear calibration.
 
 - [`ppi_mean()`](https://marcusharrisphd.com/llmmetric/reference/ppi_mean.md)
-  : Prediction-Powered Mean Estimation (PPI / PPI++)
+  : Prediction-Powered Mean Estimation (PPI / PPI++ / Active IPW-PPI)
 
 - [`ppi_proportion()`](https://marcusharrisphd.com/llmmetric/reference/ppi_proportion.md)
   : Prediction-Powered Category Proportion & Prevalence Estimation (PPI
@@ -83,6 +86,9 @@ LLM-coded corpora.
   : Prediction-Powered Generalized Linear Model (PPI / PPI++ /
   Calibrated)
 
+- [`ppi_calibrated()`](https://marcusharrisphd.com/llmmetric/reference/ppi_calibrated.md)
+  : Cross-Fitted Non-Linear Calibration for Prediction-Powered Inference
+
 - [`ppi_clustered()`](https://marcusharrisphd.com/llmmetric/reference/ppi_clustered.md)
   : Cluster-Robust Prediction-Powered Inference (PPI / PPI++)
 
@@ -91,11 +97,14 @@ LLM-coded corpora.
 
   Multilevel Random-Intercept Prediction-Powered Inference (`ppi_lmer`)
 
-## Study Planning & APA Reporting
+## Study Planning, Sampling & APA Reporting
 
-Validation sample-size planning, power curves, and publication-ready APA
-7th-edition tables.
+Stratified validation sampling, sample-size/power planning, and
+publication-ready APA 7th-edition tables.
 
+- [`select_validation_sample()`](https://marcusharrisphd.com/llmmetric/reference/select_validation_sample.md)
+  : Select a Human Validation Sample with Exact Inclusion Probabilities
+  & IPW Weights
 - [`ppi_sample_size()`](https://marcusharrisphd.com/llmmetric/reference/ppi_sample_size.md)
   : Plan Human Validation Sample Size for Prediction-Powered Inference
   (PPI++)
