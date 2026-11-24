@@ -24,18 +24,35 @@ validate_endpoint_url <- function(url, arg = "base_url") {
   if (grepl("@", authority, fixed = TRUE)) {
     cli::cli_abort("{.arg {arg}} must not embed userinfo credentials (`user:pass@`) in the URL.")
   }
-  # Validate host (strip optional IPv6 brackets or :port)
-  host <- if (startsWith(authority, "[")) {
-    sub("\\](:[0-9]+)?$", "", sub("^\\[", "", authority))
+  # Validate host and optional port (for both IPv6 bracketed and standard host[:port])
+  port_str <- ""
+  if (startsWith(authority, "[")) {
+    m_v6 <- regexec("^\\[([^\\]]+)\\](?::(.*))?$", authority, perl = TRUE)
+    parts_v6 <- regmatches(authority, m_v6)[[1L]]
+    if (length(parts_v6) < 2L) {
+      cli::cli_abort("{.arg {arg}} contains a malformed bracketed IPv6 authority: {.val {authority}}.")
+    }
+    host <- parts_v6[2L]
+    if (length(parts_v6) >= 3L && nzchar(parts_v6[3L])) {
+      port_str <- parts_v6[3L]
+    } else if (grepl("\\]:$", authority)) {
+      cli::cli_abort("{.arg {arg}} contains an empty port specification.")
+    }
   } else {
-    sub(":[0-9]+$", "", authority)
+    if (grepl(":", authority, fixed = TRUE)) {
+      host <- sub(":.*$", "", authority)
+      port_str <- sub("^[^:]+:", "", authority)
+      if (!nzchar(port_str)) {
+        cli::cli_abort("{.arg {arg}} contains an empty port specification.")
+      }
+    } else {
+      host <- authority
+    }
   }
   if (!nzchar(host) || grepl("[^A-Za-z0-9._:-]", host)) {
     cli::cli_abort("{.arg {arg}} contains an invalid host specification: {.val {host}}.")
   }
-  # Check optional port range if present
-  if (!startsWith(authority, "[") && grepl(":", authority, fixed = TRUE)) {
-    port_str <- sub("^[^:]+:", "", authority)
+  if (nzchar(port_str)) {
     if (!grepl("^[0-9]+$", port_str)) {
       cli::cli_abort("{.arg {arg}} contains an invalid port: {.val {port_str}}.")
     }
@@ -168,15 +185,34 @@ validate_cache_key_safe <- function(key, arg = "key") {
   key
 }
 
+#' Check whether a filesystem path is a symbolic link
+#' @noRd
+is_symlink_path <- function(path) {
+  rl <- Sys.readlink(path)
+  !is.na(rl) && nzchar(rl)
+}
+
 #' Resolve a disk cache file path and verify it stays strictly within the cache directory
 #' @noRd
 resolve_safe_cache_path <- function(cache_dir, key) {
   safe_key <- validate_cache_key_safe(key)
+  if (is_symlink_path(cache_dir)) {
+    cli::cli_abort("Symbolic link cache directories are rejected for security.")
+  }
   dir_norm <- normalizePath(cache_dir, winslash = "/", mustWork = TRUE)
   candidate <- file.path(dir_norm, paste0(safe_key, ".rds"))
+  if (is_symlink_path(candidate)) {
+    cli::cli_abort("Symbolic link cache entry rejected: path escapes cache containment policy.")
+  }
   parent_norm <- normalizePath(dirname(candidate), winslash = "/", mustWork = TRUE)
   if (!identical(parent_norm, dir_norm)) {
     cli::cli_abort("Resolved cache path escapes the configured cache directory.")
+  }
+  if (file.exists(candidate)) {
+    cand_norm <- normalizePath(candidate, winslash = "/", mustWork = TRUE)
+    if (!identical(dirname(cand_norm), dir_norm)) {
+      cli::cli_abort("Resolved cache file escapes the configured cache directory.")
+    }
   }
   candidate
 }
@@ -228,61 +264,12 @@ has_duplicate_json_keys <- function(parsed) {
   any(vapply(parsed, has_duplicate_json_keys, logical(1L)))
 }
 
-#' Safely extract a single JSON object string from untrusted LLM text output
-#'
-#' Handles:
-#' - Raw JSON objects (`{"score": 4}`)
-#' - Single markdown-fenced JSON blocks (with or without surrounding prose)
-#' - Strictly rejects oversized responses, embedded NUL/control bytes, and
-#'   ambiguous multi-block / injected conflicting JSON objects.
+#' Scan a string for balanced top-level JSON `{ ... }` object spans
+#' Only tracks JSON string quotes when inside an object (`depth > 0L`) so stray
+#' quotes in surrounding prose do not interfere with JSON extraction.
 #' @noRd
-extract_json_payload <- function(txt, max_bytes = 262144L) {
-  if (!is.character(txt) || length(txt) != 1L || is.na(txt)) {
-    return(list(ok = FALSE, json = NULL, error = "Response content must be a single non-NA string."))
-  }
-  n_bytes <- nchar(txt, type = "bytes")
-  if (n_bytes > max_bytes) {
-    return(list(
-      ok = FALSE,
-      json = NULL,
-      error = paste0("Response exceeds maximum allowed JSON size (", max_bytes, " bytes).")
-    ))
-  }
-  if (grepl("[\x01-\x08\x0b\x0c\x0e-\x1f]", txt)) {
-    return(list(ok = FALSE, json = NULL, error = "Response contains disallowed control characters."))
-  }
-
-  trimmed <- trimws(txt)
-  if (!nzchar(trimmed)) {
-    return(list(ok = FALSE, json = NULL, error = "Response is empty."))
-  }
-
-  # Case 1: Pure JSON object directly (starts with '{' and ends with '}')
-  if (startsWith(trimmed, "{") && endsWith(trimmed, "}")) {
-    return(list(ok = TRUE, json = trimmed, error = NULL))
-  }
-
-  # Case 2: Extract markdown fenced blocks (```json ... ``` or ``` ... ```)
-  fence_pattern <- "```(?:[a-zA-Z0-9_-]+)?\\s*([\\s\\S]*?)```"
-  m <- gregexpr(fence_pattern, trimmed, perl = TRUE)
-  matches <- regmatches(trimmed, m)[[1L]]
-  if (length(matches) == 1L) {
-    inner <- sub("^```(?:[a-zA-Z0-9_-]+)?\\s*", "", matches[1L], perl = TRUE)
-    inner <- trimws(sub("\\s*```$", "", inner, perl = TRUE))
-    if (startsWith(inner, "{") && endsWith(inner, "}")) {
-      return(list(ok = TRUE, json = inner, error = NULL))
-    }
-    return(list(ok = FALSE, json = NULL, error = "Fenced block did not contain a JSON object."))
-  } else if (length(matches) > 1L) {
-    return(list(
-      ok = FALSE,
-      json = NULL,
-      error = "Ambiguous response containing multiple fenced code blocks (rejected to prevent prompt injection)."
-    ))
-  }
-
-  # Case 3: Scan for balanced top-level `{ ... }` JSON object(s) in prose
-  chars <- strsplit(trimmed, "", fixed = TRUE)[[1L]]
+scan_top_level_json_objects <- function(s) {
+  chars <- strsplit(s, "", fixed = TRUE)[[1L]]
   depth <- 0L
   in_str <- FALSE
   esc <- FALSE
@@ -301,7 +288,7 @@ extract_json_payload <- function(txt, max_bytes = 262144L) {
       }
       next
     }
-    if (ch == "\"") {
+    if (depth > 0L && ch == "\"") {
       in_str <- TRUE
     } else if (ch == "{") {
       if (depth == 0L) start_idx <- i
@@ -309,7 +296,7 @@ extract_json_payload <- function(txt, max_bytes = 262144L) {
     } else if (ch == "}") {
       depth <- depth - 1L
       if (depth < 0L) {
-        return(list(ok = FALSE, json = NULL, error = "Malformed JSON braces in response."))
+        return(list(ok = FALSE, spans = list(), chars = chars, error = "Malformed JSON braces in response."))
       }
       if (depth == 0L && !is.na(start_idx)) {
         spans[[length(spans) + 1L]] <- c(start_idx, i)
@@ -319,9 +306,77 @@ extract_json_payload <- function(txt, max_bytes = 262144L) {
   }
 
   if (depth != 0L || length(spans) == 0L) {
-    return(list(ok = FALSE, json = NULL, error = "JSON parse error: no valid JSON object found."))
+    return(list(ok = FALSE, spans = list(), chars = chars, error = "JSON parse error: no valid JSON object found."))
   }
-  if (length(spans) > 1L) {
+  list(ok = TRUE, spans = spans, chars = chars, error = NULL)
+}
+
+#' Safely extract a single JSON object string from untrusted LLM text output
+#'
+#' Handles:
+#' - Raw JSON objects (`{"score": 4}`)
+#' - Single markdown-fenced JSON blocks (with or without surrounding prose)
+#' - Strictly rejects oversized responses, embedded NUL/control/DEL bytes, and
+#'   ambiguous multi-block / injected conflicting JSON objects.
+#' @noRd
+extract_json_payload <- function(txt, max_bytes = 262144L) {
+  if (!is.character(txt) || length(txt) != 1L || is.na(txt)) {
+    return(list(ok = FALSE, json = NULL, error = "Response content must be a single non-NA string."))
+  }
+  n_bytes <- nchar(txt, type = "bytes")
+  if (n_bytes > max_bytes) {
+    return(list(
+      ok = FALSE,
+      json = NULL,
+      error = paste0("Response exceeds maximum allowed JSON size (", max_bytes, " bytes).")
+    ))
+  }
+  if (grepl("[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]", txt)) {
+    return(list(ok = FALSE, json = NULL, error = "Response contains disallowed control characters."))
+  }
+
+  trimmed <- trimws(txt)
+  if (!nzchar(trimmed)) {
+    return(list(ok = FALSE, json = NULL, error = "Response is empty."))
+  }
+
+  # Case 1: Check markdown fenced blocks first (```json ... ``` or ``` ... ```)
+  fence_pattern <- "```(?:[a-zA-Z0-9_-]+)?\\s*([\\s\\S]*?)```"
+  m <- gregexpr(fence_pattern, trimmed, perl = TRUE)
+  matches <- regmatches(trimmed, m)[[1L]]
+  if (length(matches) > 1L) {
+    return(list(
+      ok = FALSE,
+      json = NULL,
+      error = "Ambiguous response containing multiple fenced code blocks (rejected to prevent prompt injection)."
+    ))
+  } else if (length(matches) == 1L) {
+    inner <- sub("^```(?:[a-zA-Z0-9_-]+)?\\s*", "", matches[1L], perl = TRUE)
+    inner <- trimws(sub("\\s*```$", "", inner, perl = TRUE))
+    scan_in <- scan_top_level_json_objects(inner)
+    if (!isTRUE(scan_in$ok)) {
+      return(list(ok = FALSE, json = NULL, error = "Fenced block did not contain a valid JSON object."))
+    }
+    if (length(scan_in$spans) > 1L) {
+      return(list(
+        ok = FALSE,
+        json = NULL,
+        error = "Ambiguous response containing multiple JSON objects inside fenced block (rejected to prevent prompt injection)."
+      ))
+    }
+    sp <- scan_in$spans[[1L]]
+    if (sp[1L] != 1L || sp[2L] != length(scan_in$chars)) {
+      return(list(ok = FALSE, json = NULL, error = "Fenced block contained trailing or leading non-JSON content."))
+    }
+    return(list(ok = TRUE, json = inner, error = NULL))
+  }
+
+  # Case 2: Scan raw JSON or prose-wrapped JSON for balanced top-level `{ ... }` object(s)
+  scan_res <- scan_top_level_json_objects(trimmed)
+  if (!isTRUE(scan_res$ok)) {
+    return(list(ok = FALSE, json = NULL, error = scan_res$error))
+  }
+  if (length(scan_res$spans) > 1L) {
     return(list(
       ok = FALSE,
       json = NULL,
@@ -329,7 +384,7 @@ extract_json_payload <- function(txt, max_bytes = 262144L) {
     ))
   }
 
-  sp <- spans[[1L]]
-  candidate <- paste(chars[sp[1L]:sp[2L]], collapse = "")
+  sp <- scan_res$spans[[1L]]
+  candidate <- paste(scan_res$chars[sp[1L]:sp[2L]], collapse = "")
   list(ok = TRUE, json = candidate, error = NULL)
 }

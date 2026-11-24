@@ -395,6 +395,7 @@ ppi_glm <- function(formula,
   y_lab <- as.numeric(sp$labeled[[truth_col]])
   yhat_lab <- as.numeric(sp$labeled[[pred_col]])
   yhat_unlab <- as.numeric(sp$unlabeled[[pred_col]])
+  validate_glm_domain(y_lab, yhat_lab, yhat_unlab, fam_name, check_pred = TRUE)
   n <- nrow(X_lab)
   N <- nrow(X_unlab)
   p <- ncol(X_lab)
@@ -568,21 +569,53 @@ fit_ppi_calibrated_general <- function(formula, data, unlabeled, pred_map, famil
   unlab_surr <- make_surrogate_df(unlab_df)
 
   truth_col <- all.vars(formula[[2L]])
-  mats_h <- build_ppi_model_matrices(formula, lab_df, lab_surr)
-  X_hL_full <- mats_h$X_lab
-  mats_s <- build_ppi_model_matrices(formula, lab_surr, unlab_surr)
-  X_sL_full <- mats_s$X_lab
-  X_sU_full <- mats_s$X_unlab
+  rhs_vars_all <- all.vars(formula[[3L]])
 
-  rank_info <- check_design_rank(X_hL_full, X_sU_full)
+  # Harmonize categorical (factor/character) RHS columns jointly across lab_df, lab_surr, and unlab_surr
+  # so all three model matrices share identical column names and factor contrasts!
+  for (v in rhs_vars_all) {
+    is_cat <- is.factor(lab_df[[v]]) || is.character(lab_df[[v]]) ||
+      is.factor(lab_surr[[v]]) || is.character(lab_surr[[v]]) ||
+      is.factor(unlab_surr[[v]]) || is.character(unlab_surr[[v]])
+    if (is_cat) {
+      base_lv <- if (is.factor(lab_df[[v]])) levels(lab_df[[v]]) else sort(unique(as.character(lab_df[[v]])))
+      surr_lv <- sort(unique(c(as.character(lab_surr[[v]]), as.character(unlab_surr[[v]]))))
+      extra_lv <- setdiff(surr_lv, base_lv)
+      if (length(extra_lv) > 0L) {
+        cli::cli_warn(
+          "Surrogate variable {.val {v}} contains level{?s} not observed in human labeled data: {.val {extra_lv}}."
+        )
+      }
+      joint_lv <- c(base_lv, extra_lv)
+      if (length(joint_lv) < 2L) {
+        cli::cli_abort(
+          "Categorical predictor {.val {v}} has fewer than 2 distinct levels across labeled/surrogate splits."
+        )
+      }
+      lab_df[[v]] <- factor(as.character(lab_df[[v]]), levels = joint_lv)
+      lab_surr[[v]] <- factor(as.character(lab_surr[[v]]), levels = joint_lv)
+      unlab_surr[[v]] <- factor(as.character(unlab_surr[[v]]), levels = joint_lv)
+    }
+  }
+
+  rhs_fml <- stats::delete.response(stats::terms(formula, data = lab_df))
+  mf_hL <- stats::model.frame(rhs_fml, data = lab_df, na.action = stats::na.pass, xlev = stats::.getXlevels(rhs_fml, stats::model.frame(rhs_fml, data = lab_df)))
+  xlev_joint <- stats::.getXlevels(rhs_fml, mf_hL)
+  X_hL_full <- stats::model.matrix(rhs_fml, data = stats::model.frame(rhs_fml, data = lab_df, xlev = xlev_joint))
+  X_sL_full <- stats::model.matrix(rhs_fml, data = stats::model.frame(rhs_fml, data = lab_surr, xlev = xlev_joint))
+  X_sU_full <- stats::model.matrix(rhs_fml, data = stats::model.frame(rhs_fml, data = unlab_surr, xlev = xlev_joint))
+
+  # Align all three design matrices identically by column name; determine identifiable human columns
+  rank_info <- check_design_rank(X_hL_full, X_hL_full)
   if (!isTRUE(rank_info$full_rank)) {
     cli::cli_warn(
       "Rank-deficient design matrix detected; dropping aliased column{?s}: {.val {rank_info$aliased_cols}}."
     )
   }
-  X_hL <- X_hL_full[, rank_info$keep_idx, drop = FALSE]
-  X_sL <- X_sL_full[, rank_info$keep_idx, drop = FALSE]
-  X_sU <- X_sU_full[, rank_info$keep_idx, drop = FALSE]
+  keep_names <- rank_info$keep_cols
+  X_hL <- X_hL_full[, keep_names, drop = FALSE]
+  X_sL_raw <- X_sL_full[, keep_names, drop = FALSE]
+  X_sU_raw <- X_sU_full[, keep_names, drop = FALSE]
 
   y_hL <- as.numeric(lab_df[[truth_col]])
   y_sL <- as.numeric(lab_surr[[truth_col]])
@@ -590,39 +623,70 @@ fit_ppi_calibrated_general <- function(formula, data, unlabeled, pred_map, famil
   assert_finite_values(y_hL, truth_col)
   assert_finite_values(y_sL, "LLM surrogate outcome (labeled)")
   assert_finite_values(y_sU, "LLM surrogate outcome (unlabeled)")
-
-  fit_hL <- fit_glm_benchmark(X_hL, y_hL, family_name = fam_name)
-  fit_sL <- fit_glm_benchmark(X_sL, y_sL, family_name = fam_name)
-  fit_sU <- fit_glm_benchmark(X_sU, y_sU, family_name = fam_name)
-  fit_naive <- fit_glm_benchmark(rbind(X_sL, X_sU), c(y_sL, y_sU), family_name = fam_name)
-
-  # Observation-level influence functions: psi_i = -H^{-1} g_i
-  psi_hL <- -(fit_hL$scores %*% t(safe_solve(fit_hL$hessian)))
-  psi_sL <- -(fit_sL$scores %*% t(safe_solve(fit_sL$hessian)))
-  psi_sU <- -(fit_sU$scores %*% t(safe_solve(fit_sU$hessian)))
+  validate_glm_domain(y_hL, y_sL, y_sU, fam_name, check_pred = TRUE)
 
   p <- ncol(X_hL)
+  if (n <= p) {
+    cli::cli_abort(
+      "Number of labeled observations (n = {n}) must exceed identifiable model parameters (p = {p})."
+    )
+  }
+
+  fit_hL <- fit_glm_benchmark(X_hL, y_hL, family_name = fam_name)
+
+  # Identify columns identifiable in BOTH surrogate splits (labeled & unlabeled)
+  rank_sL <- check_design_rank(X_sL_raw, X_sL_raw)
+  rank_sU <- check_design_rank(X_sU_raw, X_sU_raw)
+  surr_keep <- intersect(rank_sL$keep_cols, rank_sU$keep_cols)
+
+  psi_hL <- -(fit_hL$scores %*% t(safe_solve(fit_hL$hessian)))
+  psi_sL <- matrix(0, nrow = n, ncol = p, dimnames = list(NULL, keep_names))
+  psi_sU <- matrix(0, nrow = N, ncol = p, dimnames = list(NULL, keep_names))
+  theta_sL_aligned <- stats::setNames(rep(0, p), keep_names)
+  theta_sU_aligned <- stats::setNames(rep(0, p), keep_names)
+  theta_naive_aligned <- stats::setNames(rep(NA_real_, p), keep_names)
+  V_naive_aligned <- matrix(NA_real_, nrow = p, ncol = p, dimnames = list(keep_names, keep_names))
+
+  if (length(surr_keep) > 0L) {
+    X_sL_sub <- X_sL_raw[, surr_keep, drop = FALSE]
+    X_sU_sub <- X_sU_raw[, surr_keep, drop = FALSE]
+    fit_sL <- fit_glm_benchmark(X_sL_sub, y_sL, family_name = fam_name)
+    fit_sU <- fit_glm_benchmark(X_sU_sub, y_sU, family_name = fam_name)
+    fit_naive <- fit_glm_benchmark(rbind(X_sL_sub, X_sU_sub), c(y_sL, y_sU), family_name = fam_name)
+
+    psi_sL[, surr_keep] <- -(fit_sL$scores %*% t(safe_solve(fit_sL$hessian)))
+    psi_sU[, surr_keep] <- -(fit_sU$scores %*% t(safe_solve(fit_sU$hessian)))
+    theta_sL_aligned[surr_keep] <- fit_sL$theta
+    theta_sU_aligned[surr_keep] <- fit_sU$theta
+    theta_naive_aligned[surr_keep] <- fit_naive$theta
+    V_naive_aligned[surr_keep, surr_keep] <- fit_naive$vcov
+  }
+
   lam_vec <- numeric(p)
-  names(lam_vec) <- colnames(X_hL)
+  names(lam_vec) <- keep_names
   for (k in seq_len(p)) {
+    if (!(keep_names[k] %in% surr_keep)) {
+      lam_vec[k] <- 0
+      next
+    }
     cov_k <- stats::cov(psi_hL[, k], psi_sL[, k])
     var_k <- stats::var(psi_sL[, k]) + (n / N) * stats::var(psi_sU[, k])
     lam_vec[k] <- if (is.finite(var_k) && var_k > 1e-12 && is.finite(cov_k)) cov_k / var_k else 0
   }
 
   Lambda <- diag(lam_vec, nrow = p, ncol = p)
-  theta_cal_sub <- as.numeric(fit_hL$theta + Lambda %*% (fit_sU$theta - fit_sL$theta))
-  names(theta_cal_sub) <- colnames(X_hL)
+  theta_cal_sub <- as.numeric(fit_hL$theta + Lambda %*% (theta_sU_aligned - theta_sL_aligned))
+  names(theta_cal_sub) <- keep_names
 
   df_adj <- if (n > p) (n - 1) / (n - p) else 1
   diff_psi_L <- psi_hL - psi_sL %*% Lambda
   V_cal_sub <- (df_adj / n) * safe_cov(diff_psi_L) + (1 / N) * (Lambda %*% safe_cov(psi_sU) %*% Lambda)
   V_cal_sub <- 0.5 * (V_cal_sub + t(V_cal_sub))
-  dimnames(V_cal_sub) <- list(colnames(X_hL), colnames(X_hL))
+  dimnames(V_cal_sub) <- list(keep_names, keep_names)
 
   exp_cal <- expand_aliased_results(theta_cal_sub, V_cal_sub, rank_info)
   exp_hum <- expand_aliased_results(fit_hL$theta, fit_hL$vcov, rank_info)
-  exp_naive <- expand_aliased_results(fit_naive$theta, fit_naive$vcov, rank_info)
+  exp_naive <- expand_aliased_results(theta_naive_aligned, V_naive_aligned, rank_info)
 
   tbl_cal <- tidy_ppi_table(exp_cal$theta, exp_cal$vcov, method_label = "ppi_calibrated", conf_level = conf_level)
   tbl_hum <- tidy_ppi_table(exp_hum$theta, exp_hum$vcov, method_label = "human_only", conf_level = conf_level)
@@ -647,6 +711,29 @@ fit_ppi_calibrated_general <- function(formula, data, unlabeled, pred_map, famil
       aliased_terms = rank_info$aliased_cols
     )
   )
+}
+
+# Validate outcome and prediction values satisfy canonical GLM family domain bounds
+validate_glm_domain <- function(y_lab, yhat_lab, yhat_unlab, fam_name, check_pred = TRUE) {
+  if (identical(fam_name, "binomial")) {
+    if (any(y_lab < 0 | y_lab > 1, na.rm = TRUE)) {
+      cli::cli_abort("Outcomes for {.code family = binomial()} must lie in [0, 1].")
+    }
+    if (isTRUE(check_pred) &&
+        (any(yhat_lab < 0 | yhat_lab > 1, na.rm = TRUE) ||
+         any(yhat_unlab < 0 | yhat_unlab > 1, na.rm = TRUE))) {
+      cli::cli_abort("LLM predictions for {.code family = binomial()} must lie in [0, 1].")
+    }
+  } else if (identical(fam_name, "poisson")) {
+    if (any(y_lab < 0, na.rm = TRUE)) {
+      cli::cli_abort("Outcomes for {.code family = poisson()} must be non-negative (>= 0).")
+    }
+    if (isTRUE(check_pred) &&
+        (any(yhat_lab < 0, na.rm = TRUE) || any(yhat_unlab < 0, na.rm = TRUE))) {
+      cli::cli_abort("LLM predictions for {.code family = poisson()} must be non-negative (>= 0).")
+    }
+  }
+  invisible(TRUE)
 }
 
 #' @export

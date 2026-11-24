@@ -67,13 +67,19 @@ g_study <- function(data,
     cli::cli_abort("Column {.val {score_col}} must be numeric for {.fn g_study}.")
   }
 
-  # Auto-detect active facets if NULL
+  # Auto-detect active facets if NULL (supports both llmmetric and airgapllm consensus_passes schemas)
   if (is.null(facets)) {
-    cand <- intersect(c("prompt", "model", "temperature"), names(df))
-    facets <- cand[vapply(cand, function(col) {
+    primary_cand <- intersect(c("prompt", "prompt_id", "model", "temperature", "seed"), names(df))
+    facets <- primary_cand[vapply(primary_cand, function(col) {
       vals <- df[[col]]
       length(unique(vals[!is.na(vals)])) >= 2L
     }, logical(1L))]
+    if (length(facets) == 0L && "pass_id" %in% names(df)) {
+      vals <- df[["pass_id"]]
+      if (length(unique(vals[!is.na(vals)])) >= 2L) {
+        facets <- "pass_id"
+      }
+    }
     if (length(facets) == 0L) {
       cli::cli_abort(
         "Could not auto-detect any facet columns with >= 2 levels. Please specify {.arg facets} explicitly."

@@ -244,6 +244,11 @@ select_validation_sample <- function(data,
     unique(strata_vec)
   }
   H <- length(u_strata)
+  if (n_target < H) {
+    cli::cli_abort(
+      "Target validation sample size {.arg n} ({n_target}) must be at least the number of strata ({H}) to ensure positive inclusion probabilities."
+    )
+  }
   idx_by_h <- lapply(u_strata, function(h) which(strata_vec == h))
   N_h <- vapply(idx_by_h, length, integer(1L))
   sd_h <- if (!is.null(sc_neyman)) {
@@ -336,7 +341,9 @@ allocate_stratum_counts <- function(n_total, caps, weights, min_per = 2L) {
     floors <- pmin(as.integer(caps), 1L)
   }
   if (sum(floors) > n_total) {
-    floors <- rep(0L, H)
+    cli::cli_abort(
+      "Cannot allocate positive sample size to all {H} strata with {.arg n} = {n_total}."
+    )
   }
 
   n_h <- floors

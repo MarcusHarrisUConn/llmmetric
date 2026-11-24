@@ -78,23 +78,48 @@ safe_cross_cov <- function(A, B) {
   crossprod(Ac, Bc) / (n - 1)
 }
 
-#' Render simple `{key}` template placeholders without evaluating arbitrary R code
+#' Render simple `{key}` template placeholders in a single pass
+#'
+#' Scans only the original `template` for `{key}` tokens so untrusted values
+#' (such as `{text}` containing `{ssn}` or `{human_score}`) can never trigger
+#' second-order interpolation of other dataframe columns or R code.
 #' @noRd
 render_prompt_template <- function(template, values) {
-  out <- template
-  for (nm in names(values)) {
-    placeholder <- paste0("{", nm, "}")
-    if (grepl(placeholder, out, fixed = TRUE)) {
-      val <- values[[nm]]
-      val_str <- if (is.null(val) || length(val) == 0L || is.na(val[1L])) {
-        ""
-      } else {
-        as.character(val[1L])
-      }
-      out <- gsub(placeholder, val_str, out, fixed = TRUE)
-    }
+  if (!is.character(template) || length(template) != 1L || is.na(template) || !nzchar(template)) {
+    return(template)
   }
-  out
+  m <- gregexpr("\\{[A-Za-z0-9_.]+\\}", template, perl = TRUE)[[1L]]
+  if (length(m) == 1L && m[1L] == -1L) {
+    return(template)
+  }
+  starts <- as.integer(m)
+  lens <- as.integer(attr(m, "match.length"))
+  ends <- starts + lens - 1L
+  n_chr <- nchar(template, type = "chars")
+  val_names <- names(values) %||% character()
+
+  gap_starts <- c(1L, ends + 1L)
+  gap_ends <- c(starts - 1L, n_chr)
+  gaps <- ifelse(gap_starts <= gap_ends, substring(template, gap_starts, gap_ends), "")
+
+  repls <- vapply(seq_along(starts), function(i) {
+    tok <- substr(template, starts[i], ends[i])
+    nm <- substr(tok, 2L, nchar(tok, type = "chars") - 1L)
+    if (!(nm %in% val_names)) {
+      return(tok)
+    }
+    val <- values[[nm]]
+    if (is.null(val) || length(val) == 0L || is.na(val[1L])) {
+      ""
+    } else {
+      as.character(val[1L])
+    }
+  }, character(1L), USE.NAMES = FALSE)
+
+  pieces <- character(2L * length(starts) + 1L)
+  pieces[seq.int(1L, 2L * length(starts) + 1L, by = 2L)] <- gaps
+  pieces[seq.int(2L, 2L * length(starts), by = 2L)] <- repls
+  paste(pieces, collapse = "")
 }
 
 #' Format numeric vector cleanly for print methods

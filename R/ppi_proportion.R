@@ -131,6 +131,9 @@ ppi_proportion <- function(data,
     }
     assert_finite_values(as.numeric(F_lab), "pred_col (labeled)")
     assert_finite_values(as.numeric(F_unlab), "pred_col (unlabeled)")
+    if (any(F_lab < 0 | F_lab > 1) || any(F_unlab < 0 | F_unlab > 1)) {
+      cli::cli_abort("Predicted probability columns in {.arg pred_col} must lie in [0, 1].")
+    }
     colnames(Y_lab) <- colnames(F_lab) <- colnames(F_unlab) <- cat_lvls
   } else {
     pcol <- pred_cols_vec[1L]
@@ -145,6 +148,9 @@ ppi_proportion <- function(data,
     if (is_bin_truth && is_cont_prob && is.null(levels)) {
       assert_finite_values(raw_fl, pcol)
       assert_finite_values(raw_fu, pcol)
+      if (any(raw_fl < 0 | raw_fl > 1) || any(raw_fu < 0 | raw_fu > 1)) {
+        cli::cli_abort("Continuous predicted probabilities in {.arg pred_col} ({.val {pcol}}) must lie in [0, 1].")
+      }
       cat_lvls <- "positive"
       K <- 1L
       Y_lab <- matrix(as.numeric(raw_t), ncol = 1L, dimnames = list(NULL, cat_lvls))
@@ -228,9 +234,14 @@ ppi_proportion <- function(data,
   tbl_naive <- tidy_ppi_table(est_naive, V_naive, method_label = "naive_llm", conf_level = eff_conf, df = Inf)
 
   if (isTRUE(clamp_ci)) {
+    if (any(est_ppi < 0 | est_ppi > 1, na.rm = TRUE)) {
+      cli::cli_warn(
+        "Unclamped PPI proportion estimate(s) fell outside [0, 1]; confidence interval bounds were clamped to [0, 1]."
+      )
+    }
     clamp_tbl <- function(tb) {
-      tb$conf_low <- pmax(tb$conf_low, 0)
-      tb$conf_high <- pmin(tb$conf_high, 1)
+      tb$conf_low <- pmin(pmax(tb$conf_low, 0), 1)
+      tb$conf_high <- pmin(pmax(tb$conf_high, 0), 1)
       tb
     }
     tbl_ppi <- clamp_tbl(tbl_ppi)
@@ -259,4 +270,37 @@ ppi_proportion <- function(data,
       small_sample = small_sample
     )
   )
+}
+
+#' @export
+confint.llm_ppi_proportion <- function(object, parm, level = object$conf_level, ...) {
+  cf <- object$coefficients
+  se <- sqrt(pmax(diag(as.matrix(object$vcov)), 0))
+  K <- length(cf)
+  eff_level <- if (isTRUE(object$simultaneous) && K > 1L) {
+    1 - (1 - level) / K
+  } else {
+    level
+  }
+  alpha <- 1 - eff_level
+  crit <- if (is.finite(object$df) && object$df > 0) {
+    stats::qt(1 - alpha / 2, df = object$df)
+  } else {
+    stats::qnorm(1 - alpha / 2)
+  }
+  lo <- cf - crit * se
+  hi <- cf + crit * se
+  if (isTRUE(object$clamp_ci)) {
+    lo <- pmin(pmax(lo, 0), 1)
+    hi <- pmin(pmax(hi, 0), 1)
+  }
+  ci <- cbind(lo, hi)
+  alpha_lbl <- 1 - level
+  pct <- paste0(format(100 * c(alpha_lbl / 2, 1 - alpha_lbl / 2), trim = TRUE, digits = 3L), " %")
+  colnames(ci) <- pct
+  rownames(ci) <- names(cf)
+  if (!missing(parm)) {
+    ci <- ci[parm, , drop = FALSE]
+  }
+  ci
 }

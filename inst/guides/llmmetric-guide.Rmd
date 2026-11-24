@@ -2,7 +2,7 @@
 title: "llmmetric Methods Guide"
 subtitle: "Psychometric Reliability, Measurement Invariance, and Prediction-Powered Inference for LLM-Coded Research Data"
 author: "Marcus Harris"
-date: "Version 0.4.0 (2026)"
+date: "Version 0.5.0 (2026)"
 output:
   pdf_document:
     toc: true

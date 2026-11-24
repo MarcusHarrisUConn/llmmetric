@@ -32,6 +32,13 @@ resolve_ipw_data_and_weights <- function(data, truth_col, pred_col, unlabeled = 
     if (anyNA(pi_lab_chk) || any(!is.finite(pi_lab_chk)) || any(pi_lab_chk <= 0 | pi_lab_chk > 1)) {
       cli::cli_abort("All labeled {.arg inclusion_prob} values must lie strictly in (0, 1].")
     }
+    # Enforce Horvitz-Thompson positivity across all supplied non-NA inclusion probabilities
+    pi_non_na <- pi_raw[!is.na(pi_raw)]
+    if (length(pi_non_na) > 0L && (any(!is.finite(pi_non_na)) || any(pi_non_na <= 0 | pi_non_na > 1))) {
+      cli::cli_abort(
+        "All {.arg inclusion_prob} values must lie strictly in (0, 1] (zero or non-finite inclusion probabilities violate Horvitz-Thompson positivity)."
+      )
+    }
     w_raw <- ifelse(is.na(pi_raw) | pi_raw <= 0, NA_real_, 1 / pi_raw)
   } else {
     if (is.character(weights) && length(weights) == 1L) {
@@ -55,6 +62,13 @@ resolve_ipw_data_and_weights <- function(data, truth_col, pred_col, unlabeled = 
     w_lab_chk <- w_raw[lab_mask]
     if (anyNA(w_lab_chk) || any(!is.finite(w_lab_chk)) || any(w_lab_chk <= 0)) {
       cli::cli_abort("All labeled {.arg weights} values must be strictly positive finite numbers.")
+    }
+    # Reject infinite/non-positive weights anywhere in the supplied vector (e.g. from zero-probability strata)
+    w_non_na <- w_raw[!is.na(w_raw)]
+    if (length(w_non_na) > 0L && (any(!is.finite(w_non_na)) || any(w_non_na <= 0))) {
+      cli::cli_abort(
+        "All {.arg weights} values must be strictly positive finite numbers (infinite or zero weights violate Horvitz-Thompson positivity)."
+      )
     }
   }
 
@@ -105,10 +119,17 @@ fit_ipw_ppi_mean <- function(data, truth_col, pred_col, unlabeled, lambda,
   f_all <- c(f_lab, f_unlab)
   rw <- c(w_lab, rep(0, N)) # length M, mean(rw) == 1
 
+  n_eff <- (sum(w_lab)^2) / sum(w_lab^2)
+  if (!is.finite(n_eff) || n_eff < 2) {
+    cli::cli_abort(
+      "Kish effective labeled sample size under IPW weights (n_eff = {round(n_eff, 2L)}) is less than 2; variance is unidentifiable."
+    )
+  }
+
   # IPW Human-Only benchmark (lambda = 0)
   est_hum <- mean(rw * y_pad)
   phi_hum <- rw * (y_pad - est_hum)
-  df_adj_hum <- n / max(n - 1, 1)
+  df_adj_hum <- n_eff / max(n_eff - 1, 1)
   var_hum <- df_adj_hum * stats::var(phi_hum) / M
 
   # Optimal IPW lambda* minimizing Var(a_i + lambda * b_i)
@@ -129,11 +150,11 @@ fit_ipw_ppi_mean <- function(data, truth_col, pred_col, unlabeled, lambda,
   }
 
   df_ref <- Inf
-  small_sample <- n < 20L
+  small_sample <- (n < 20L) || (n_eff < 20)
   if (small_sample) {
-    df_ref <- max(n - 1L, 1L)
+    df_ref <- max(min(n, n_eff) - 1, 1)
     cli::cli_warn(
-      "Small labeled validation sample (n = {n}); using t({df_ref}) reference distribution for finite-sample inference."
+      "Small effective labeled validation sample (n = {n}, Kish n_eff = {round(n_eff, 1L)}); using t({round(df_ref, 1L)}) reference distribution for finite-sample inference."
     )
   }
 
@@ -143,7 +164,7 @@ fit_ipw_ppi_mean <- function(data, truth_col, pred_col, unlabeled, lambda,
   lab_res <- rw * ((y_pad - est_ppi) - lam_val * (f_all - est_ppi))
   ss_phi <- sum((phi_ppi - mean(phi_ppi))^2)
   lab_share <- if (ss_phi > 1e-16) min(sum(lab_res^2) / ss_phi, 1) else 0
-  df_adj_ppi <- 1 + (1 / max(n - 1, 1)) * lab_share
+  df_adj_ppi <- 1 + (1 / max(n_eff - 1, 1)) * lab_share
   var_ppi <- df_adj_ppi * stats::var(phi_ppi) / M
 
   theta_ppi <- stats::setNames(est_ppi, "(Mean)")
@@ -217,13 +238,19 @@ fit_ipw_ppi_lm <- function(formula, data, pred_col, unlabeled, method, lambda,
   if (n <= p) {
     cli::cli_abort("Number of labeled observations (n = {n}) must exceed identifiable parameters (p = {p}).")
   }
+  n_eff <- (sum(w_lab)^2) / sum(w_lab^2)
+  if (!is.finite(n_eff) || n_eff <= p) {
+    cli::cli_abort(
+      "Kish effective labeled sample size under IPW weights (n_eff = {round(n_eff, 2L)}) must exceed identifiable parameters (p = {p})."
+    )
+  }
 
   df_ref <- Inf
-  small_sample <- n < max(20L, 2L * p + 5L)
+  small_sample <- (n < max(20L, 2L * p + 5L)) || (n_eff < max(20, 2 * p + 5))
   if (small_sample) {
-    df_ref <- max(n - p, 1L)
+    df_ref <- max(min(n, n_eff) - p, 1)
     cli::cli_warn(
-      "Small labeled validation sample (n = {n}, p = {p}); using t({df_ref}) reference distribution for finite-sample inference."
+      "Small effective labeled validation sample (n = {n}, Kish n_eff = {round(n_eff, 1L)}, p = {p}); using t({round(df_ref, 1L)}) reference distribution for finite-sample inference."
     )
   }
 

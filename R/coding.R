@@ -187,15 +187,27 @@ code_texts <- function(data,
     if (grepl("[[:cntrl:]]", checkpoint_file)) {
       cli::cli_abort("{.arg checkpoint_file} must not contain control characters.")
     }
+    if (dir.exists(checkpoint_file)) {
+      cli::cli_abort("{.arg checkpoint_file} ({.path {checkpoint_file}}) must be a file path, not an existing directory.")
+    }
+    if (is_symlink_path(checkpoint_file)) {
+      cli::cli_abort("Symbolic link {.arg checkpoint_file} is rejected for security.")
+    }
     ckpt_dir <- dirname(checkpoint_file)
     if (!dir.exists(ckpt_dir)) {
       dir.create(ckpt_dir, recursive = TRUE, showWarnings = FALSE)
     }
   }
 
-  # Atomic checkpoint persistence helper
+  # Atomic checkpoint persistence helper with 0600 permissions & strict write verification
   save_checkpoint_atomic <- function(ckpt_map, path) {
     if (is.null(path)) return(invisible(FALSE))
+    if (dir.exists(path)) {
+      cli::cli_abort("{.arg checkpoint_file} ({.path {path}}) is a directory; cannot write checkpoint.")
+    }
+    if (is_symlink_path(path)) {
+      cli::cli_abort("Refusing to overwrite symbolic link checkpoint file {.path {path}}.")
+    }
     env_payload <- list(
       llmmetric_checkpoint_v = 1L,
       schema_hash = design$schema$hash,
@@ -209,12 +221,17 @@ code_texts <- function(data,
     tmp_path <- file.path(dirname(path), paste0(".", basename(path), "_", tmp_suffix, ".tmp"))
     on.exit(if (file.exists(tmp_path)) unlink(tmp_path), add = TRUE)
     saveRDS(env_payload, file = tmp_path)
-    ok <- file.rename(tmp_path, path)
+    suppressWarnings(Sys.chmod(tmp_path, mode = "0600"))
+    ok <- suppressWarnings(file.rename(tmp_path, path))
     if (!isTRUE(ok)) {
-      ok <- file.copy(tmp_path, path, overwrite = TRUE)
+      ok <- suppressWarnings(file.copy(tmp_path, path, overwrite = TRUE))
       unlink(tmp_path)
     }
-    invisible(isTRUE(ok))
+    if (!isTRUE(ok)) {
+      cli::cli_abort("Failed to persist checkpoint file {.path {path}}.")
+    }
+    suppressWarnings(Sys.chmod(path, mode = "0600"))
+    invisible(TRUE)
   }
 
   load_checkpoint_safe <- function(path, expected_schema_hash) {
@@ -375,7 +392,10 @@ code_texts <- function(data,
         raw_vec[row_i] <- cached$raw %||% NA_character_
       }
       if (!is.null(checkpoint_file)) {
-        ckpt_entries[[ckey]] <- cached
+        ckpt_entries[[ckey]] <- list(
+          data = cached$data,
+          raw = if (isTRUE(keep_raw)) cached$raw else NULL
+        )
       }
       next
     }
@@ -426,7 +446,7 @@ code_texts <- function(data,
         for (fnm in field_names) {
           field_cols[[fnm]][row_i] <- val$data[[fnm]]
         }
-        entry_val <- list(data = val$data, raw = last_raw)
+        entry_val <- list(data = val$data, raw = if (isTRUE(keep_raw)) last_raw else NULL)
         cache_set(cache, ckey, entry_val)
         if (!is.null(checkpoint_file)) {
           ckpt_entries[[ckey]] <- entry_val

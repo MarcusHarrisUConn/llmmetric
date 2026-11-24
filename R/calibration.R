@@ -288,6 +288,8 @@ compute_categorical_calibration <- function(pred, truth, ordinal = FALSE) {
     union(levels(truth), unique(as.character(pred)))
   } else if (is.factor(pred)) {
     union(levels(pred), unique(as.character(truth)))
+  } else if (is.numeric(truth) && is.numeric(pred)) {
+    as.character(sort(unique(c(truth[!is.na(truth)], pred[!is.na(pred)]))))
   } else {
     sort(unique(c(as.character(truth), as.character(pred))))
   }

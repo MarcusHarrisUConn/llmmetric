@@ -346,11 +346,27 @@ ppi_lmer <- function(formula,
 #' Parse optional `(1 | cluster)` random-intercept term from formula
 #' @noRd
 parse_lmer_formula <- function(formula, cluster = NULL) {
-  f_str <- paste(deparse(formula, width.cutoff = 500L), collapse = " ")
-  m <- regexec("\\(\\s*1\\s*\\|\\s*([A-Za-z0-9_.]+)\\s*\\)", f_str)
-  hits <- regmatches(f_str, m)[[1L]]
+  lhs <- paste(deparse(formula[[2L]], width.cutoff = 500L), collapse = " ")
+  rhs_raw <- paste(deparse(formula[[3L]], width.cutoff = 500L), collapse = " ")
 
-  if (length(hits) >= 2L) {
+  re_m <- gregexpr("\\([^()]*\\|[^()]*\\)", rhs_raw, perl = TRUE)
+  re_terms <- regmatches(rhs_raw, re_m)[[1L]]
+
+  if (length(re_terms) > 1L) {
+    cli::cli_abort(
+      "Multiple random-effect terms ({.val {re_terms}}) are not supported in {.fn ppi_lmer}; specify a single random-intercept term {.code (1 | cluster)}."
+    )
+  }
+
+  if (length(re_terms) == 1L) {
+    term_str <- trimws(re_terms[1L])
+    m <- regexec("^\\(\\s*1\\s*\\|\\s*([A-Za-z0-9_.]+)\\s*\\)$", term_str, perl = TRUE)
+    hits <- regmatches(term_str, m)[[1L]]
+    if (length(hits) < 2L) {
+      cli::cli_abort(
+        "Only random-intercept terms {.code (1 | cluster)} are supported in {.fn ppi_lmer}; unsupported random-effect term: {.code {term_str}}."
+      )
+    }
     detected_cluster <- hits[2L]
     if (!is.null(cluster) && !identical(cluster, detected_cluster)) {
       cli::cli_abort(
@@ -358,14 +374,20 @@ parse_lmer_formula <- function(formula, cluster = NULL) {
       )
     }
     cluster <- detected_cluster
-    # Remove the random-intercept term cleanly
-    lhs <- deparse(formula[[2L]], width.cutoff = 500L)
-    rhs_raw <- paste(deparse(formula[[3L]], width.cutoff = 500L), collapse = " ")
-    rhs_clean <- gsub("\\+?\\s*\\(\\s*1\\s*\\|\\s*[A-Za-z0-9_.]+\\s*\\)", "", rhs_raw)
+    # Remove the single validated random-intercept term cleanly
+    rhs_clean <- sub("\\+?\\s*\\(\\s*1\\s*\\|\\s*[A-Za-z0-9_.]+\\s*\\)", "", rhs_raw, perl = TRUE)
     rhs_clean <- trimws(gsub("^\\s*\\+\\s*|\\s*\\+\\s*$", "", rhs_clean))
     if (!nzchar(rhs_clean)) rhs_clean <- "1"
+    if (grepl("\\|", rhs_clean)) {
+      cli::cli_abort("Unsupported random-effect operator {.code |} remaining in {.arg formula}.")
+    }
     fixed_formula <- stats::as.formula(paste(lhs, "~", rhs_clean), env = environment(formula))
   } else {
+    if (grepl("\\|", rhs_raw)) {
+      cli::cli_abort(
+        "Unsupported random-effect syntax in {.arg formula}; use {.code (1 | cluster)} for random intercepts."
+      )
+    }
     if (is.null(cluster)) {
       cli::cli_abort(
         "Specify a random-intercept term {.code (1 | cluster)} in {.arg formula} or pass {.arg cluster} explicitly."
@@ -433,6 +455,13 @@ fit_ppi_clustered_engine <- function(X_lab, y_lab, yhat_lab, cl_lab,
   N <- nrow(X_unlab)
   p <- ncol(X_lab)
   ops <- canonical_glm_ops(family_name)
+
+  validate_glm_domain(y_lab, yhat_lab, yhat_unlab, family_name, check_pred = TRUE)
+  if (n <= p) {
+    cli::cli_abort(
+      "Number of labeled observations (n = {n}) must exceed identifiable model parameters (p = {p})."
+    )
+  }
 
   if (is.null(w_lab)) w_lab <- rep(1, n)
   if (is.null(w_unlab)) w_unlab <- rep(1, N)
@@ -561,11 +590,29 @@ fit_ppi_clustered_engine <- function(X_lab, y_lab, yhat_lab, cl_lab,
     meat <- (adj_L / (n^2)) * crossprod(S_L) + ((lam_val^2) * adj_U / (N^2)) * crossprod(S_U)
     df_eff <- if (isTRUE(small_sample_df)) max(G_lab - 1, 1) else Inf
   } else {
-    S_tot <- sum_by_cluster(D_lab_c, cl_lab, all_cl) / n +
-      lam_val * sum_by_cluster(U_unlab_c, cl_unlab, all_cl) / N
-    adj_tot <- (G_total / max(G_total - 1, 1))
-    meat <- adj_tot * crossprod(S_tot)
-    df_eff <- if (isTRUE(small_sample_df)) max(G_total - 1, 1) else Inf
+    A_cl <- sum_by_cluster(D_lab_c, cl_lab, all_cl) / n
+    B_cl <- lam_val * sum_by_cluster(U_unlab_c, cl_unlab, all_cl) / N
+    adj_L <- (G_lab / max(G_lab - 1, 1)) * ((n - 1) / max(n - p, 1))
+    adj_U <- (G_unlab / max(G_unlab - 1, 1)) * ((N - 1) / max(N - p, 1))
+    S_tot <- sqrt(adj_L) * A_cl + sqrt(adj_U) * B_cl
+    meat <- crossprod(S_tot)
+
+    if (isTRUE(small_sample_df)) {
+      v_L <- adj_L * sum(A_cl^2)
+      v_U <- adj_U * sum(B_cl^2)
+      d_L <- max(G_lab - 1, 1)
+      d_U <- max(G_unlab - 1, 1)
+      if (v_U <= 1e-16) {
+        df_eff <- d_L
+      } else if (v_L <= 1e-16) {
+        df_eff <- d_U
+      } else {
+        ws_df <- ((v_L + v_U)^2) / ((v_L^2) / d_L + (v_U^2) / d_U)
+        df_eff <- min(max(G_total - 1, 1), max(d_L, ws_df))
+      }
+    } else {
+      df_eff <- Inf
+    }
   }
 
   V_ppi <- H_inv %*% meat %*% H_inv

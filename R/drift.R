@@ -69,6 +69,8 @@ check_drift <- function(data,
   if (isTRUE(na.rm)) {
     keep <- !is.na(df[[score_col]]) & !is.na(df[[version_col]]) & !is.na(df[[id_col]])
     df <- df[keep, req_cols, drop = FALSE]
+  } else if (anyNA(df[[score_col]]) || anyNA(df[[version_col]]) || anyNA(df[[id_col]])) {
+    cli::cli_abort("Missing values detected in {.fn check_drift} and {.code na.rm = FALSE}.")
   }
   assert_finite_values(df[[score_col]], score_col)
   if (!is.null(truth_col)) {

@@ -71,8 +71,8 @@ d_study <- function(g_study,
     for (f in facets) {
       if (f %in% names(grid)) {
         vals <- grid[[f]]
-        if (!is.numeric(vals) || length(vals) < 1L || anyNA(vals) || any(vals < 1)) {
-          cli::cli_abort("Grid values for facet {.val {f}} must be positive numbers.")
+        if (!is.numeric(vals) || length(vals) < 1L || anyNA(vals) || any(!is.finite(vals)) || any(vals < 1)) {
+          cli::cli_abort("Grid values for facet {.val {f}} must be finite positive numbers.")
         }
         full_grid[[f]] <- sort(unique(as.integer(round(vals))))
       } else {
@@ -83,8 +83,8 @@ d_study <- function(g_study,
   }
 
   if (!is.null(costs)) {
-    if (!is.numeric(costs) || is.null(names(costs)) || anyNA(costs) || any(costs <= 0)) {
-      cli::cli_abort("{.arg costs} must be a named positive numeric vector.")
+    if (!is.numeric(costs) || is.null(names(costs)) || anyNA(costs) || any(!is.finite(costs)) || any(costs <= 0)) {
+      cli::cli_abort("{.arg costs} must be a named finite positive numeric vector.")
     }
   }
 

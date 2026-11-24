@@ -72,10 +72,13 @@ human_irr <- function(data,
 
   # Normalize wide or long format into a unified long table AND wide rating matrix
   if (!is.null(rater_cols)) {
-    if (!is.character(rater_cols) || length(rater_cols) < 2L || anyNA(rater_cols)) {
-      cli::cli_abort("{.arg rater_cols} must name at least 2 human rater columns.")
+    if (!is.character(rater_cols) || anyNA(rater_cols)) {
+      cli::cli_abort("{.arg rater_cols} must name at least 2 distinct human rater columns.")
     }
     rater_cols <- unique(rater_cols)
+    if (length(rater_cols) < 2L) {
+      cli::cli_abort("{.arg rater_cols} must name at least 2 distinct human rater columns.")
+    }
     assert_columns(df, rater_cols, arg = "data")
     unit_ids <- paste0("u_", seq_len(nrow(df)))
     long_list <- lapply(rater_cols, function(rc) {
@@ -101,9 +104,18 @@ human_irr <- function(data,
 
   if (isTRUE(na.rm)) {
     long_df <- long_df[!is.na(long_df$unit) & !is.na(long_df$rater) & !is.na(long_df$value), , drop = FALSE]
-  } else if (anyNA(long_df$value)) {
+  } else if (anyNA(long_df$value) || anyNA(long_df$unit) || anyNA(long_df$rater)) {
     cli::cli_abort("Missing ratings detected and {.code na.rm = FALSE}.")
   }
+
+  # Recompute active raters AFTER na.rm filtering so all-NA raters do not reach REML/ANOVA
+  active_raters <- intersect(rater_levels, unique(long_df$rater))
+  if (length(active_raters) < 2L) {
+    cli::cli_abort(
+      "At least 2 human raters with non-missing ratings are required for {.fn human_irr} (found {length(active_raters)})."
+    )
+  }
+  rater_levels <- active_raters
 
   if (nrow(long_df) < 4L) {
     cli::cli_abort("Not enough valid human ratings to compute inter-rater reliability.")
@@ -167,6 +179,12 @@ compute_human_irr_continuous <- function(long_df, u_units, rater_levels) {
     }
   }
   balanced <- !anyNA(mat) && (nrow(long_df) == n * k)
+  n_multi <- sum(rowSums(!is.na(mat)) >= 2L)
+  if (n_multi < 2L) {
+    cli::cli_abort(
+      "At least 2 overlapping units rated by >= 2 human raters are required to estimate continuous inter-rater reliability (found {n_multi})."
+    )
+  }
 
   if (is_constant_numeric(y)) {
     cli::cli_warn("Human ratings are constant (zero variance); ICC and correlations are undefined (NA).")
@@ -270,6 +288,8 @@ compute_human_irr_categorical <- function(long_df, u_units, rater_levels, ordina
   k <- length(rater_levels)
   lvls <- if (is.factor(long_df$value)) {
     levels(long_df$value)
+  } else if (is.numeric(long_df$value)) {
+    as.character(sort(unique(long_df$value[!is.na(long_df$value)])))
   } else {
     sort(unique(as.character(long_df$value)))
   }

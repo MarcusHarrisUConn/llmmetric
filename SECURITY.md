@@ -1,10 +1,10 @@
-# Security Policy & v0.2.0 Red-Team Hardening Audit
+# Security Policy & Red-Team Hardening Audits (v0.2.0 & v0.5.0)
 
-`llmmetric` processes untrusted text responses from remote or local LLM endpoints, manages API credentials, persists disk caches, and computes statistical inference over potentially adversarial or degenerate data. This document records the threat model, vulnerabilities identified during the v0.2.0 internal red-team audit, and concrete mitigations enforced in code (`R/security.R`, `R/validate.R`).
+`llmmetric` processes untrusted text responses from remote or local LLM endpoints, manages API credentials, persists disk caches and checkpoints, and computes statistical inference over potentially adversarial or degenerate data. This document records the threat model, vulnerabilities identified during both the v0.2.0 internal red-team audit and the v0.5.0 independent peer red-team audit, and concrete mitigations enforced in code (`R/security.R`, `R/validate.R`, `R/backends.R`, `R/coding.R`, `R/cache.R`, `R/reporting.R`).
 
 ---
 
-## 1. Threat Model & Audit Findings
+## 1. Threat Model & v0.2.0 Audit Findings
 
 | ID | Attack Surface | v0.1.0 Finding | v0.2.0 Mitigation |
 | :--- | :--- | :--- | :--- |
@@ -18,7 +18,20 @@
 
 ---
 
-## 2. Responsible Use & Reporting
+## 2. v0.5.0 Independent Peer Red-Team Hardening
+
+| ID | Attack Surface | Pre-v0.5.0 Finding | v0.5.0 Mitigation |
+| :--- | :--- | :--- | :--- |
+| **S8** | **Error-Handler Glue Injection / RCE & Secret Exfiltration** (`backend_openai()`, `backend_ollama()`) | Concatenating redacted transport/HTTP error messages via `paste0()` directly into `cli::cli_abort()` allowed `{...}` expressions in adversarial error bodies to execute R code and exfiltrate `secret_val`. | Bound redacted error text to a local variable and interpolated safely via `cli::cli_abort("...: {safe_msg}")` across OpenAI and Ollama error handlers; audited all `cli::cli_*()` calls package-wide. |
+| **S9** | **Second-Order Prompt Template Injection** (`render_prompt_template()`, `code_texts()`) | Sequential `gsub()` over all row columns allowed untrusted text containing `{ssn}` or `{human_score}` to substitute adjacent sensitive/gold-standard columns into outbound prompts. | Rewrote `render_prompt_template()` as a strict single-pass placeholder replacer scanning only the original template string. |
+| **S10** | **Custom HTTP Header Secret Persistence** (`backend_openai(extra_headers=)`) | Sensitive headers (`X-API-Key`, proxy tokens) were stored in plaintext in `backend$extra_headers` and unredacted in caught errors. | Sealed all `extra_headers` values in `.llmmetric_secret_vault` via `new_redacted_secret()` and scrubbed all revealed header values in `redact_secrets()`. |
+| **S11** | **Disk Cache & Checkpoint Symlinks, Permissions & Raw Output Persistence** (`coding_cache("disk")`, `code_texts()`) | Symlinks inside `cache_dir` escaped cache confinement; `keep_raw = FALSE` still persisted `last_raw` with `0644` permissions; directory paths passed as `checkpoint_file` failed silently. | `resolve_safe_cache_path()` and `code_texts()` reject symlinks and directory targets, enforce `0600` file permissions, omit raw payloads when `keep_raw = FALSE`, and abort on checkpoint write failure. |
+| **S12** | **Markdown/HTML & LaTeX Injection** (`format_apa_table()`) | Unescaped `|`, `<script>`, `{`, `}`, `~`, and newlines in factor levels, captions, or notes enabled table breakout, raw HTML/XSS injection, and broken LaTeX compilation. | Added `escape_markdown_cell()` (escaping `|`, `<`, `>`, and newlines) and complete `escape_latex_cell()` (escaping `\`, `{`, `}`, `~`, `^`, `&`, `%`, `$`, `#`, `_`, and newlines). |
+| **S13** | **JSON Parser Edge Cases & IPv6 Port Validation** (`extract_json_payload()`, `validate_endpoint_url()`) | Raw/fenced multi-object strings short-circuited before multi-object detection; stray prose quotes broke Case 3 extraction; `\x7f` DEL bytes and out-of-range IPv6 ports (`[::1]:99999`) were accepted. | Unified top-level balanced-brace scanning across raw, fenced, and prose inputs (tracking quotes only inside objects), rejected `\x7f`, and enforced `[1, 65535]` port range validation for IPv6 authorities. |
+
+---
+
+## 3. Responsible Use & Reporting
 
 - Never pass untrusted user input directly into `base_url`, `extra_headers`, or `dir` without validation.
 - Store cloud API keys in environment variables (e.g., `OPENAI_API_KEY`) rather than hard-coding them in scripts.

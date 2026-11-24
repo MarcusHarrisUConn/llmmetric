@@ -9,11 +9,11 @@ Results: **0 errors | 0 warnings | 0 notes**.
 
 ## Test, Coverage & Spelling Verification
 
-- `devtools::test()`: all unit tests, branch-coverage tests, adversarial security tests, numerical edge-case tests, and Monte Carlo coverage proofs (standard PPI++, clustered/multilevel PPI++, active Horvitz-Thompson IPW-PPI++, and cross-fitted non-linear calibration) pass with 0 failures, 0 warnings, and 0 skips.
+- `devtools::test()`: all 714 unit tests, branch-coverage tests, adversarial security tests, peer red-team regression tests (`test-peer-redteam.R`), numerical edge-case tests, and Monte Carlo coverage proofs (standard PPI++, clustered/multilevel PPI++, active Horvitz-Thompson IPW-PPI++, and cross-fitted non-linear calibration) pass with 0 failures, 0 warnings, and 0 skips.
 - `covr::package_coverage()`: > 92% line coverage across the package.
 - `spelling::spell_check_package()`: 0 misspellings (domain terminology maintained in `inst/WORDLIST`).
 - All examples, tests, and 5 executable vignettes run completely offline without network access, write only to `tempdir()` with full cleanup, respect `<= 2` CPU cores, and leave global RNG/options state untouched.
 
 ## Downstream dependencies
 
-This is a new submission (version 0.4.0); there are no reverse dependencies.
+This is a new submission (version 0.5.0); there are no reverse dependencies.

@@ -174,6 +174,7 @@ cache_set <- function(cache, key, value) {
   on.exit(if (file.exists(tmp_path)) unlink(tmp_path), add = TRUE)
 
   saveRDS(envelope, file = tmp_path)
+  suppressWarnings(Sys.chmod(tmp_path, mode = "0600"))
   ok <- file.rename(tmp_path, path)
   if (!isTRUE(ok)) {
     # Fallback overwrite if target existed on platforms where rename does not replace
@@ -183,6 +184,7 @@ cache_set <- function(cache, key, value) {
   if (!isTRUE(ok)) {
     cli::cli_abort("Failed to atomically persist disk cache entry {.val {safe_key}}.")
   }
+  suppressWarnings(Sys.chmod(path, mode = "0600"))
 
   cache$state$writes <- cache$state$writes + 1L
   invisible(TRUE)

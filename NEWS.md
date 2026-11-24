@@ -1,3 +1,24 @@
+# llmmetric 0.5.0
+
+## Security Hardening (Independent Peer Red-Team Audit Remediation)
+- **Eliminated `cli` Glue Injection / RCE & Secret Exfiltration (`backend_openai()`, `backend_ollama()`):** Replaced dynamic `paste0()` error strings passed into `cli::cli_abort()` with safe variable interpolation (`"{safe_msg}"`), eliminating arbitrary `{...}` glue execution and API-key exfiltration from adversarial HTTP/transport error bodies.
+- **Single-Pass Prompt Template Rendering (`render_prompt_template()`):** Rewrote template substitution to scan placeholders exclusively in the original template string in a single pass, preventing untrusted text containing `{ssn}`, `{patient_name}`, or `{human_score}` from triggering second-order substitution of adjacent data-frame columns.
+- **Sealed Custom HTTP Headers (`backend_openai(extra_headers = ...)`):** All `extra_headers` values are now stored inside the non-serialized session secret vault (`llm_redacted_secret`) and scrubbed from error messages alongside `api_key`.
+- **Disk Cache & Checkpoint Hardening (`resolve_safe_cache_path()`, `cache_set()`, `code_texts()`):** Blocked symlink escapes in disk cache directories/entries and checkpoint files, enforced `0600` owner-only permissions on written cache/checkpoint files, ensured `keep_raw = FALSE` omits raw model outputs from persisted disk caches and checkpoints, rejected directory paths as `checkpoint_file`, and verified atomic write success.
+- **Markdown/HTML & LaTeX Escaping (`format_apa_table()`):** Escaped `|`, `<`, `>`, and newlines in Markdown tables (preventing column breakouts and raw HTML/XSS injection) and escaped `{`, `}`, `~`, `\`, and newlines cleanly in LaTeX tables.
+- **Strict Untrusted JSON & IPv6 URL Validation (`extract_json_payload()`, `validate_endpoint_url()`):** Rejected multi-object payloads inside raw or fenced responses, prevented unmatched prose double quotes from breaking balanced JSON extraction, filtered `\x7f` DEL bytes, and enforced `[1, 65535]` port range validation on bracketed IPv6 hosts.
+
+## Statistical Accuracy, Boundary Guards & Interop Improvements
+- **Cross-Fitted Non-Linear Calibration (`ppi_calibrated()`):** Replaced internal model-frame names with collision-proof identifiers (fixing overwrites when covariates are named `y` or `b_1`, and supporting non-syntactic column names), eliminated held-out `val_df` leakage into unlabeled predictions by determining active fold covariates strictly from training folds, and added upfront domain validation for `calibrator = "logistic"` and canonical GLM families.
+- **Horvitz-Thompson Positivity & Effective Sample Size (`select_validation_sample()`, `ppi_mean()`, `ppi_lm()`):** Enforced `n >= H` positivity in stratified sampling (preventing $\pi_i = 0$ and `Inf` weights), rejected non-finite/zero weights across all corpus rows in IPW-PPI, and enforced Kish effective sample-size checks (`n_eff >= 2` / `n_eff > p`) with effective-df `t` inference to prevent zero-SE collapse under extreme weights.
+- **Numeric Ordinal Ordering & IRR Guards (`human_irr()`, `calibration_metrics()`):** Fixed lexicographic sorting on numeric ordinal scales (e.g., `1:10` now sorts numerically rather than `"1", "10", "2", ...`), validated `>= 2` distinct active non-NA raters after `na.rm` filtering, and required `>= 2` overlapping multi-rated units in continuous `human_irr()`.
+- **Proportion PPI & `confint()` Parity (`ppi_proportion()`):** Prevented inverted clamped CIs (`pmin(pmax(..., 0), 1)` on both endpoints), validated continuous probability inputs in `[0, 1]`, and added `confint.llm_ppi_proportion()` honoring `simultaneous` and `clamp_ci`.
+- **Calibrated `pred_map` Alignment & GLM Domain Checks (`ppi_lm()`, `ppi_glm()`):** Jointly harmonized categorical factor levels across human labeled, surrogate labeled, and surrogate unlabeled splits by exact column name, and enforced `[0, 1]` (`binomial()`) and `>= 0` (`poisson()`) domain constraints.
+- **Clustered & Multilevel Inference (`ppi_clustered()`, `ppi_lmer()`):** Enforced `n > p`, aligned overlapping-cluster CR1 scaling and Welch-Satterthwaite effective cluster degrees of freedom (so `lambda = 0` matches `human_only` identically), and explicitly rejected unsupported multiple random-effect or random-slope formulas in `ppi_lmer()`.
+- **Schema, Drift, D-Study & Cross-Package Interop (`validate_coded_output()`, `check_drift()`, `d_study()`, `g_study()`, `backend_custom()`):** Accepted `NA_character_` on `nullable = TRUE` fields and native R `factor` values under default `coerce = FALSE`; added upfront `na.rm = FALSE` error in `check_drift()` and `is.finite()` checks on `d_study()` `grid`/`costs`; expanded `g_study(facets = NULL)` auto-detection to include `prompt_id`, `seed`, and `pass_id` (seamless `airgapllm::consensus_passes()` interop); and stripped dot-prefixed metadata columns from 1-row data frames returned by `backend_custom()`.
+
+---
+
 # llmmetric 0.4.0
 
 ## New Features

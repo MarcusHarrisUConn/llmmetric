@@ -265,14 +265,25 @@ build_apa_irr <- function(obj, digits, caption, note) {
   list(table = tbl, caption = caption %||% default_cap, note = note %||% default_note)
 }
 
+#' Escape Markdown/HTML metacharacters cleanly to prevent table breakout and XSS
+#' @noRd
+escape_markdown_cell <- function(x) {
+  x <- as.character(x)
+  x <- gsub("[\r\n]+", " ", x)
+  x <- gsub("|", "\\|", x, fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  x <- gsub(">", "&gt;", x, fixed = TRUE)
+  x
+}
+
 #' Render Markdown APA table
 #' @noRd
 render_apa_markdown <- function(tbl, caption = NULL, note = NULL) {
-  cols <- names(tbl)
-  mat <- as.matrix(tbl)
+  cols <- escape_markdown_cell(names(tbl))
+  mat <- apply(as.matrix(tbl), c(1L, 2L), escape_markdown_cell)
   lines <- character()
   if (!is.null(caption) && nzchar(caption)) {
-    lines <- c(lines, paste0("**", caption, "**"), "")
+    lines <- c(lines, paste0("**", escape_markdown_cell(caption), "**"), "")
   }
   lines <- c(
     lines,
@@ -283,21 +294,28 @@ render_apa_markdown <- function(tbl, caption = NULL, note = NULL) {
     lines <- c(lines, paste0("| ", paste(mat[i, ], collapse = " | "), " |"))
   }
   if (!is.null(note) && nzchar(note)) {
-    lines <- c(lines, "", paste0("*Note.* ", note))
+    lines <- c(lines, "", paste0("*Note.* ", escape_markdown_cell(note)))
   }
   paste(lines, collapse = "\n")
 }
 
-#' Escape LaTeX special characters cleanly
+#' Escape LaTeX special characters cleanly (including braces, tilde, and newlines)
 #' @noRd
 escape_latex_cell <- function(x) {
-  x <- gsub("\\", "\\textbackslash{}", x, fixed = TRUE)
+  x <- as.character(x)
+  x <- gsub("[\r\n]+", " ", x)
+  bs_tok <- "\x01LLMMETRICBS\x01"
+  x <- gsub("\\", bs_tok, x, fixed = TRUE)
+  x <- gsub("{", "\\{", x, fixed = TRUE)
+  x <- gsub("}", "\\}", x, fixed = TRUE)
   x <- gsub("&", "\\&", x, fixed = TRUE)
   x <- gsub("%", "\\%", x, fixed = TRUE)
   x <- gsub("$", "\\$", x, fixed = TRUE)
   x <- gsub("#", "\\#", x, fixed = TRUE)
   x <- gsub("_", "\\_", x, fixed = TRUE)
   x <- gsub("^", "\\textasciicircum{}", x, fixed = TRUE)
+  x <- gsub("~", "\\textasciitilde{}", x, fixed = TRUE)
+  x <- gsub(bs_tok, "\\textbackslash{}", x, fixed = TRUE)
   x
 }
 

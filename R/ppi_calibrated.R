@@ -85,11 +85,6 @@ ppi_calibrated <- function(formula,
     cal_name <- "custom"
   } else {
     cal_name <- match.arg(calibrator)
-    if (cal_name == "logistic" && fam_name != "binomial") {
-      cli::cli_warn(
-        "{.code calibrator = \"logistic\"} is intended for binary outcomes; proceeding with binomial calibration learner."
-      )
-    }
   }
 
   assert_scalar_numeric(df, "df", min = 1, max = 12)
@@ -117,6 +112,24 @@ ppi_calibrated <- function(formula,
   unlab_df <- sp$unlabeled
   n <- nrow(lab_df)
   N <- nrow(unlab_df)
+
+  y_lab_chk <- as.numeric(lab_df[[truth_col]])
+  validate_glm_domain(
+    y_lab = y_lab_chk,
+    yhat_lab = as.numeric(lab_df[[pred_col]]),
+    yhat_unlab = as.numeric(unlab_df[[pred_col]]),
+    fam_name = fam_name,
+    check_pred = FALSE
+  )
+  if (identical(cal_name, "logistic") && (any(y_lab_chk < 0 | y_lab_chk > 1))) {
+    cli::cli_abort(
+      "{.code calibrator = \"logistic\"} requires outcomes in [0, 1] (typically with {.code family = binomial()})."
+    )
+  } else if (identical(cal_name, "logistic") && fam_name != "binomial") {
+    cli::cli_warn(
+      "{.code calibrator = \"logistic\"} is intended for binary outcomes; proceeding with binomial calibration learner."
+    )
+  }
 
   K <- min(folds, max(2L, as.integer(floor(n / 5L))))
   if (n < 10L) {
@@ -180,13 +193,39 @@ ppi_calibrated <- function(formula,
     yhat_cf_unlab <- yhat_cf_unlab + (length(val_idx) / n) * pred_u
   }
 
+  validate_glm_domain(
+    y_lab = y_lab_chk,
+    yhat_lab = yhat_oof_lab,
+    yhat_unlab = yhat_cf_unlab,
+    fam_name = fam_name,
+    check_pred = TRUE
+  )
+
   # Fit baseline uncalibrated PPI++ for direct benchmarking
+  # (If raw pred_col lies outside canonical GLM bounds, e.g. raw logits for binomial, clamp only for benchmark)
+  lab_uncal_df <- lab_df
+  unlab_uncal_df <- unlab_df
+  if (fam_name == "binomial") {
+    raw_l <- as.numeric(lab_uncal_df[[pred_col]])
+    raw_u <- as.numeric(unlab_uncal_df[[pred_col]])
+    if (any(raw_l < 0 | raw_l > 1) || any(raw_u < 0 | raw_u > 1)) {
+      lab_uncal_df[[pred_col]] <- pmin(pmax(raw_l, 0), 1)
+      unlab_uncal_df[[pred_col]] <- pmin(pmax(raw_u, 0), 1)
+    }
+  } else if (fam_name == "poisson") {
+    raw_l <- as.numeric(lab_uncal_df[[pred_col]])
+    raw_u <- as.numeric(unlab_uncal_df[[pred_col]])
+    if (any(raw_l < 0) || any(raw_u < 0)) {
+      lab_uncal_df[[pred_col]] <- pmax(raw_l, 0)
+      unlab_uncal_df[[pred_col]] <- pmax(raw_u, 0)
+    }
+  }
   uncal_fit <- ppi_glm(
     formula = formula,
-    data = lab_df,
+    data = lab_uncal_df,
     pred_col = pred_col,
     family = fam,
-    unlabeled = unlab_df,
+    unlabeled = unlab_uncal_df,
     method = if (identical(lambda, "auto")) "ppi++" else "ppi",
     lambda = if (identical(lambda, "auto")) NULL else lambda,
     conf_level = conf_level
@@ -316,33 +355,47 @@ fit_predict_nonlinear_calibrator <- function(trn_df, val_df, unlab_df,
     B_unlab <- matrix(p_unlab_c, ncol = 1L)
   }
 
-  colnames(B_trn) <- colnames(B_val) <- colnames(B_unlab) <- paste0("b_", seq_len(ncol(B_trn)))
-  df_trn_m <- cbind(data.frame(y = y_trn), as.data.frame(B_trn))
+  colnames(B_trn) <- colnames(B_val) <- colnames(B_unlab) <- paste0(".llmmetric_cal_b_", seq_len(ncol(B_trn)))
+  df_trn_m <- cbind(data.frame(.llmmetric_cal_y = y_trn), as.data.frame(B_trn))
   df_val_m <- as.data.frame(B_val)
   df_unlab_m <- as.data.frame(B_unlab)
 
-  # Include non-constant covariates present in training fold
-  active_covs <- character()
+  # Decide active covariates STRICTLY from trn_df alone (zero leakage from val_df or unlab_df)
+  # Use collision-proof internal column names so user covariates named `y`, `b_1`, or non-syntactic
+  # names like `` `x 1` `` never overwrite outcome/basis columns or break formula parsing.
+  cov_idx <- 0L
   for (cv in cov_vars) {
     col_t <- trn_df[[cv]]
-    if (is.factor(col_t)) {
-      if (length(unique(col_t)) >= 2L &&
-          all(as.character(val_df[[cv]]) %in% as.character(unique(col_t))) &&
-          all(as.character(unlab_df[[cv]]) %in% as.character(unique(col_t)))) {
-        active_covs <- c(active_covs, cv)
+    if (is.factor(col_t) || is.character(col_t)) {
+      t_chr <- as.character(col_t)
+      lv_t <- sort(unique(t_chr))
+      if (length(lv_t) >= 2L) {
+        cov_idx <- cov_idx + 1L
+        cname <- paste0(".llmmetric_cal_cov_", cov_idx)
+        tab_t <- tabulate(match(t_chr, lv_t), nbins = length(lv_t))
+        ref_lv <- lv_t[which.max(tab_t)]
+
+        v_chr <- as.character(val_df[[cv]])
+        v_chr[!(v_chr %in% lv_t)] <- ref_lv
+        u_chr <- as.character(unlab_df[[cv]])
+        u_chr[!(u_chr %in% lv_t)] <- ref_lv
+
+        df_trn_m[[cname]] <- factor(t_chr, levels = lv_t)
+        df_val_m[[cname]] <- factor(v_chr, levels = lv_t)
+        df_unlab_m[[cname]] <- factor(u_chr, levels = lv_t)
       }
     } else if (is.numeric(col_t) && !is_constant_numeric(col_t)) {
-      active_covs <- c(active_covs, cv)
+      cov_idx <- cov_idx + 1L
+      cname <- paste0(".llmmetric_cal_cov_", cov_idx)
+      df_trn_m[[cname]] <- as.numeric(col_t)
+      df_val_m[[cname]] <- as.numeric(val_df[[cv]])
+      df_unlab_m[[cname]] <- as.numeric(unlab_df[[cv]])
     }
   }
-  for (cv in active_covs) {
-    df_trn_m[[cv]] <- trn_df[[cv]]
-    df_val_m[[cv]] <- val_df[[cv]]
-    df_unlab_m[[cv]] <- unlab_df[[cv]]
-  }
 
-  fit_fml <- stats::as.formula(paste("y ~", paste(setdiff(names(df_trn_m), "y"), collapse = " + ")))
-  use_binom <- (cal_name == "logistic") || (fam_name == "binomial" && all(y_trn %in% c(0, 1)))
+  rhs_names <- setdiff(names(df_trn_m), ".llmmetric_cal_y")
+  fit_fml <- stats::as.formula(paste(".llmmetric_cal_y ~", paste(rhs_names, collapse = " + ")))
+  use_binom <- (cal_name == "logistic") || (fam_name == "binomial" && all(y_trn >= 0 & y_trn <= 1))
 
   if (use_binom) {
     fit <- suppressWarnings(stats::glm(fit_fml, data = df_trn_m, family = stats::binomial()))
@@ -357,7 +410,10 @@ fit_predict_nonlinear_calibrator <- function(trn_df, val_df, unlab_df,
   # Guard against rare NA predictions from rank-deficient fold covariates
   pr_val[!is.finite(pr_val)] <- mean(y_trn)
   pr_unlab[!is.finite(pr_unlab)] <- mean(y_trn)
-  if (fam_name == "poisson") {
+  if (fam_name == "binomial") {
+    pr_val <- pmin(pmax(pr_val, 0), 1)
+    pr_unlab <- pmin(pmax(pr_unlab, 0), 1)
+  } else if (fam_name == "poisson") {
     pr_val <- pmax(pr_val, 0)
     pr_unlab <- pmax(pr_unlab, 0)
   }

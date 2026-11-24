@@ -372,6 +372,14 @@ backend_openai <- function(model = "gpt-4o-mini",
   }
 
   secret_box <- new_redacted_secret(api_key)
+  sealed_headers <- if (length(extra_headers) > 0L) {
+    stats::setNames(
+      lapply(extra_headers, new_redacted_secret),
+      names(extra_headers)
+    )
+  } else {
+    list()
+  }
   id_hash <- digest::digest(
     list("openai", base_url, system_prompt, response_format, extra_body),
     algo = "sha256"
@@ -390,7 +398,7 @@ backend_openai <- function(model = "gpt-4o-mini",
       max_retries = as.integer(max_retries),
       backoff_base = backoff_base,
       max_response_bytes = as.integer(round(max_response_bytes)),
-      extra_headers = extra_headers,
+      extra_headers = sealed_headers,
       extra_body = extra_body,
       transport = transport
     ),
@@ -442,12 +450,20 @@ build_openai_request_spec <- function(backend, request) {
   }
 
   secret_val <- reveal_secret(backend$api_key)
+  extra_hdrs_revealed <- if (length(backend$extra_headers) > 0L) {
+    stats::setNames(
+      lapply(backend$extra_headers, reveal_secret),
+      names(backend$extra_headers)
+    )
+  } else {
+    list()
+  }
   headers <- c(
     list(
       Authorization = paste("Bearer", secret_val),
       `Content-Type` = "application/json"
     ),
-    backend$extra_headers
+    extra_hdrs_revealed
   )
 
   list(
@@ -466,14 +482,19 @@ backend_score.llm_backend_openai <- function(backend, request, ...) {
   t0 <- proc.time()[["elapsed"]]
   spec <- build_openai_request_spec(backend, request)
   secret_val <- reveal_secret(backend$api_key)
+  extra_secret_vals <- if (length(backend$extra_headers) > 0L) {
+    vapply(backend$extra_headers, reveal_secret, character(1L), USE.NAMES = FALSE)
+  } else {
+    character()
+  }
+  all_secrets <- c(secret_val, extra_secret_vals)
 
   if (!is.null(backend$transport)) {
     parsed <- tryCatch(
       backend$transport(spec),
       error = function(e) {
-        cli::cli_abort(
-          paste0("OpenAI transport error: ", redact_secrets(conditionMessage(e), secrets = secret_val))
-        )
+        safe_msg <- redact_secrets(conditionMessage(e), secrets = all_secrets)
+        cli::cli_abort("OpenAI transport error: {safe_msg}")
       }
     )
   } else {
@@ -496,9 +517,8 @@ backend_score.llm_backend_openai <- function(backend, request, ...) {
     resp <- tryCatch(
       httr2::req_perform(req),
       error = function(e) {
-        cli::cli_abort(
-          paste0("OpenAI request failed: ", redact_secrets(conditionMessage(e), secrets = secret_val))
-        )
+        safe_msg <- redact_secrets(conditionMessage(e), secrets = all_secrets)
+        cli::cli_abort("OpenAI request failed: {safe_msg}")
       }
     )
     raw_body <- httr2::resp_body_raw(resp)
@@ -654,7 +674,13 @@ backend_score.llm_backend_ollama <- function(backend, request, ...) {
   spec <- build_ollama_request_spec(backend, request)
 
   if (!is.null(backend$transport)) {
-    parsed <- backend$transport(spec)
+    parsed <- tryCatch(
+      backend$transport(spec),
+      error = function(e) {
+        safe_msg <- redact_secrets(conditionMessage(e))
+        cli::cli_abort("Ollama transport error: {safe_msg}")
+      }
+    )
   } else {
     req <- httr2::request(spec$url)
     req <- httr2::req_body_json(req, spec$body, auto_unbox = TRUE)
@@ -666,7 +692,13 @@ backend_score.llm_backend_ollama <- function(backend, request, ...) {
         backoff = function(attempt) jittered_backoff(attempt, base = spec$backoff_base)
       )
     }
-    resp <- httr2::req_perform(req)
+    resp <- tryCatch(
+      httr2::req_perform(req),
+      error = function(e) {
+        safe_msg <- redact_secrets(conditionMessage(e))
+        cli::cli_abort("Ollama request failed: {safe_msg}")
+      }
+    )
     raw_body <- httr2::resp_body_raw(resp)
     check_response_size(raw_body, max_bytes = spec$max_response_bytes)
     parsed <- jsonlite::fromJSON(rawToChar(raw_body), simplifyVector = FALSE)
@@ -770,7 +802,15 @@ backend_score.llm_backend_custom <- function(backend, request, ...) {
     if (nrow(res) != 1L) {
       cli::cli_abort("Custom backend {.val {backend$name}} returned a {nrow(res)}-row data.frame; expected exactly 1 row.")
     }
-    content <- as.list(res[1L, , drop = FALSE])
+    schema_nms <- if (!is.null(request$schema)) names(request$schema$fields) else character()
+    col_nms <- names(res)
+    # Drop dot-prefixed metadata columns (e.g., .row_id, .status, .attempts, .error, .elapsed_ms)
+    # when not declared in schema; for airgap_extraction tibbles also align cleanly to schema fields
+    keep_cols <- col_nms[!(startsWith(col_nms, ".") & !(col_nms %in% schema_nms))]
+    if (inherits(res, "airgap_extraction") && length(schema_nms) > 0L && all(schema_nms %in% keep_cols)) {
+      keep_cols <- schema_nms
+    }
+    content <- as.list(res[1L, keep_cols, drop = FALSE])
     model_out <- request$model %||% backend$name
     raw_out <- res
   } else if (is.list(res) && "content" %in% names(res)) {

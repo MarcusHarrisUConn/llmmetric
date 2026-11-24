@@ -313,8 +313,8 @@ validate_coded_output <- function(x, schema, coerce = FALSE, max_bytes = 262144L
     }
 
     val <- parsed[[nm]]
-    is_null_val <- is.null(val) || (length(val) == 1L && is.logical(val) && is.na(val)) ||
-      (length(val) == 1L && !is.list(val) && !is.character(val) && is.na(val) && !is.nan(val))
+    is_null_val <- is.null(val) ||
+      (length(val) == 1L && !is.list(val) && is.na(val) && !(is.numeric(val) && is.nan(val)))
     if (is_null_val) {
       if (isTRUE(f$nullable)) {
         out[[nm]] <- switch(
@@ -406,6 +406,9 @@ validate_coded_output <- function(x, schema, coerce = FALSE, max_bytes = 262144L
       }
       out[[nm]] <- int_val
     } else if (f$type == "factor") {
+      if (is.factor(val)) {
+        val <- as.character(val)
+      }
       if (!is.character(val)) {
         if (isTRUE(coerce) && !is.logical(val)) {
           val <- as.character(val)
