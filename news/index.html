@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">llmmetric</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.5.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -48,6 +48,23 @@
       <small>Source: <a href="https://github.com/MarcusHarrisUConn/llmmetric/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.5.1" id="llmmetric-051">llmmetric 0.5.1<a class="anchor" aria-label="anchor" href="#llmmetric-051"></a></h2>
+<div class="section level3">
+<h3 id="json-schema--structured-output-fixes-0-5-1">JSON Schema &amp; Structured Output Fixes<a class="anchor" aria-label="anchor" href="#json-schema--structured-output-fixes-0-5-1"></a></h3>
+<ul><li>
+<strong>Single-Field JSON Schema Array Serialization (<code><a href="../reference/as_json_schema.html">as_json_schema()</a></code>):</strong> Wrapped <code>required</code> and <code>enum</code> in <code>I(as.character(...))</code> so <code>httr2::req_body_json(..., auto_unbox = TRUE)</code> and <code>jsonlite::toJSON(..., auto_unbox = TRUE)</code> always serialize <code>"required": ["score"]</code> (and <code>"required": []</code> / <code>"enum": [...]</code>) as JSON arrays rather than bare strings when a schema has a single required field—fixing HTTP 400 rejections on live Ollama <code>/api/chat</code> and OpenAI Structured Outputs endpoints.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="cross-platform--windows-compatibility-fixes-0-5-1">Cross-Platform &amp; Windows Compatibility Fixes<a class="anchor" aria-label="anchor" href="#cross-platform--windows-compatibility-fixes-0-5-1"></a></h3>
+<ul><li>
+<strong>Windows Path &amp; Symlink Containment (<code>is_symlink_path()</code>, <code>resolve_safe_cache_path()</code>, <code><a href="../reference/coding_cache.html">coding_cache()</a></code>):</strong> Added <code>canonical_path_key()</code> normalizing backslashes, trailing slashes, and Windows case-insensitive drive paths, plus a canonical <code><a href="https://rdrr.io/r/base/normalizePath.html" class="external-link">normalizePath()</a></code> fallback in <code>is_symlink_path()</code> so Windows NTFS file symlinks (where <code><a href="https://rdrr.io/r/base/Sys.readlink.html" class="external-link">Sys.readlink()</a></code> may return <code>""</code>) and trailing-slash symlink directories are detected reliably without false positives on Windows 8.3 short paths (<code>RUNNER~1</code>) or macOS <code>/var</code> temp directories. Also rejects symlinked <code>dir</code> upfront in <code>coding_cache("disk", dir = ...)</code>.</li>
+<li>
+<strong>Cross-Platform Permissions &amp; Atomic Writes (<code>restrict_file_permissions()</code>, <code><a href="../reference/cache_operations.html">cache_set()</a></code>, <code><a href="../reference/code_texts.html">code_texts()</a></code>):</strong> Applied <code>0600</code> file permissions (<code>use_umask = FALSE</code>) exclusively on POSIX platforms (avoiding Windows <code><a href="https://rdrr.io/r/base/files2.html" class="external-link">Sys.chmod()</a></code> quirks), placed disk cache temporary files inside <code>dirname(path)</code>, and suppressed fallback <code><a href="https://rdrr.io/r/base/files.html" class="external-link">file.rename()</a></code> overwrite warnings on Windows.</li>
+<li>
+<strong>Portable Symlink Tests (<code>tests/testthat/test-peer-redteam.R</code>):</strong> Isolated symlink security regression tests with an OS-availability guard (<code><a href="https://rdrr.io/r/base/files.html" class="external-link">file.symlink()</a></code>), accepted both symlink-rejection and path-escape error messages across platforms, and added direct unit tests for Windows path canonicalization and symlinked checkpoints/cache directories.</li>
+</ul><hr></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.5.0" id="llmmetric-050">llmmetric 0.5.0<a class="anchor" aria-label="anchor" href="#llmmetric-050"></a></h2>
 <div class="section level3">
