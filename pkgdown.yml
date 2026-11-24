@@ -1,0 +1,12 @@
+pandoc: 3.8.3
+pkgdown: 2.2.1
+pkgdown_sha: ~
+articles:
+  designing-validation-studies: designing-validation-studies.html
+  dpf-and-fairness: dpf-and-fairness.html
+  getting-started: getting-started.html
+  ppi-coverage-proof: ppi-coverage-proof.html
+last_built: 2026-11-24T19:33Z
+urls:
+  reference: https://marcusharrisphd.com/llmmetric/reference
+  article: https://marcusharrisphd.com/llmmetric/articles

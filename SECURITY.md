@@ -1,0 +1,33 @@
+# Security Policy & v0.2.0 Red-Team Hardening Audit
+
+`llmmetric` processes untrusted text responses from remote or local LLM
+endpoints, manages API credentials, persists disk caches, and computes
+statistical inference over potentially adversarial or degenerate data.
+This document records the threat model, vulnerabilities identified
+during the v0.2.0 internal red-team audit, and concrete mitigations
+enforced in code (`R/security.R`, `R/validate.R`).
+
+------------------------------------------------------------------------
+
+## 1. Threat Model & Audit Findings
+
+| ID | Attack Surface | v0.1.0 Finding | v0.2.0 Mitigation |
+|:---|:---|:---|:---|
+| **S1** | **SSRF / Unsafe Endpoint URLs** ([`backend_openai()`](https://marcusharrisphd.com/llmmetric/reference/backend_openai.md), [`backend_ollama()`](https://marcusharrisphd.com/llmmetric/reference/backend_ollama.md)) | `base_url` accepted arbitrary non-HTTP schemes (`file:///etc/passwd`, `ftp://`), embedded credentials (`user:pass@host`), or control characters. | `validate_endpoint_url()` strictly enforces `http://` or `https://`, non-empty validated host, valid port `[1, 65535]`, and rejects whitespace, control characters, and embedded userinfo (`@`). |
+| **S2** | **HTTP Header CRLF Injection** (`backend_openai(extra_headers=)`) | User-supplied `extra_headers` were passed without control-character validation. | `validate_http_headers()` rejects `\r`, `\n`, control bytes, and invalid header names/values. |
+| **S3** | **API Credential Exposure** ([`backend_openai()`](https://marcusharrisphd.com/llmmetric/reference/backend_openai.md)) | Plaintext `api_key` was stored directly on the S3 backend list, exposing secrets via [`str()`](https://rdrr.io/r/utils/str.html), [`dput()`](https://rdrr.io/r/base/dput.html), [`saveRDS()`](https://rdrr.io/r/base/readRDS.html), or unredacted HTTP error messages. | `new_redacted_secret()` stores raw credentials exclusively in a non-serialized session-scoped internal vault (`.llmmetric_secret_vault`). The backend object holds only an opaque `token_id` and prints `"<redacted>"`. Saved `.rds` files contain zero secret bytes, [`cache_key()`](https://marcusharrisphd.com/llmmetric/reference/cache_key.md) never includes secrets, and `redact_secrets()` scrubs API keys and `Bearer` tokens from all caught transport/HTTP error messages. |
+| **S4** | **Response Size Exhaustion & Retry Storms** ([`backend_openai()`](https://marcusharrisphd.com/llmmetric/reference/backend_openai.md), [`backend_ollama()`](https://marcusharrisphd.com/llmmetric/reference/backend_ollama.md)) | HTTP responses had no byte cap, and retries used unjittered exponential backoff. | Enforces configurable `max_response_bytes` (default 1 MiB) before parsing and bounded jittered exponential backoff (`jittered_backoff()`) without mutating global `.Random.seed`. |
+| **S5** | **Untrusted / Prompt-Injected JSON Outputs** ([`validate_coded_output()`](https://marcusharrisphd.com/llmmetric/reference/validate_coded_output.md)) | Duplicate JSON keys (`{"score": 5, "score": 999}`) were silently accepted by `jsonlite`; trailing prose around fenced JSON failed or risked ambiguity; extreme/non-finite numeric strings required stricter rejection. | `extract_json_payload()` enforces a size limit (default 256 KiB), rejects disallowed control characters, cleanly extracts a single unambiguous JSON object or fenced block, and **rejects multiple conflicting JSON objects or multiple fenced blocks** (prompt-injection defense). `has_duplicate_json_keys()` rejects duplicate keys; non-finite tokens (`NaN`, `Inf`, `-Infinity`) and unsafe numeric magnitudes (`> 1e15`) are always rejected even when `coerce = TRUE`. |
+| **S6** | **Disk Cache Path Traversal & Tampering** (`coding_cache("disk")`) | Unvalidated keys (e.g., `../../evil`) allowed reading or writing `.rds` files outside `cache$dir`; non-atomic [`saveRDS()`](https://rdrr.io/r/base/readRDS.html) risked torn writes; corrupted entries lacked integrity verification. | `validate_cache_key_safe()` and `resolve_safe_cache_path()` block path separators, `..`, control chars, and directory escapes. Disk writes use atomic same-directory temp file + [`file.rename()`](https://rdrr.io/r/base/files.html). Every entry is wrapped in a version-2 integrity envelope with a SHA-256 payload checksum; corrupted or tampered files are automatically evicted with a warning and treated cleanly as cache misses. |
+| **S7** | **Numerical Hallucination & Degenerate Inference** ([`g_study()`](https://marcusharrisphd.com/llmmetric/reference/g_study.md), [`dpf_test()`](https://marcusharrisphd.com/llmmetric/reference/dpf_test.md), `ppi_*()`) | Constant zero-variance scores caused [`g_study()`](https://marcusharrisphd.com/llmmetric/reference/g_study.md) to divide IEEE-754 dust and report `G = 0.925`, and caused [`dpf_test()`](https://marcusharrisphd.com/llmmetric/reference/dpf_test.md) to report `delta_r2 = 0.499` with `lm` warnings. Exact collinearity in [`ppi_lm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_lm.md) silently split effects via pseudoinverse without warning; perfect separation in binomial [`ppi_glm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_glm.md) diverged (`beta = 304`) with collapsed SEs (`0.18`). | Centralized guards in `R/validate.R`: zero-variance guards in [`g_study()`](https://marcusharrisphd.com/llmmetric/reference/g_study.md), [`d_study()`](https://marcusharrisphd.com/llmmetric/reference/d_study.md), [`calibration_metrics()`](https://marcusharrisphd.com/llmmetric/reference/calibration_metrics.md), [`check_drift()`](https://marcusharrisphd.com/llmmetric/reference/check_drift.md), and [`dpf_test()`](https://marcusharrisphd.com/llmmetric/reference/dpf_test.md); QR-pivoted rank checks (`check_design_rank()`) dropping aliased columns cleanly with `NA` slots and warnings (matching [`stats::lm()`](https://rdrr.io/r/stats/lm.html)); step-damped separation detection + Fisher information SE floor in [`ppi_glm()`](https://marcusharrisphd.com/llmmetric/reference/ppi_glm.md); exact separate-sample $`\hat{\lambda}^*`$ denominator `V_tilde_L + (n/N) * V_tilde_U`; finite-sample `t` reference df and warnings for small validation samples. |
+
+------------------------------------------------------------------------
+
+## 2. Responsible Use & Reporting
+
+- Never pass untrusted user input directly into `base_url`,
+  `extra_headers`, or `dir` without validation.
+- Store cloud API keys in environment variables (e.g., `OPENAI_API_KEY`)
+  rather than hard-coding them in scripts.
+- Report suspected security issues at
+  <https://github.com/MarcusHarrisUConn/llmmetric/issues>.
